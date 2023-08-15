@@ -8,6 +8,21 @@
 ![Python](https://img.shields.io/badge/python->=3.7-blue?logo=python)
 
 
+## Overview
+Design Goals: 
+- Cloud OME-Zarr fusion. 
+- Generic affine transform support.
+- Reasonable runtime. 
+
+Discussion Points: 
+- Generic data loading for other dataset types
+- Generic interpolation scheme
+- Parallelization — How to map code to hardware. 
+
+Function signatures specify numpy arrays. 
+To run on a GPU, can theoretically swap numpy array type with GPU type (torch array, rapid array, etc.)
+
+
 
 ## Usage
  - To use this template, click the green `Use this template` button and `Create new repository`.
