@@ -1,0 +1,25 @@
+# Application input
+# User should only need to edit this file to run fusion algorithm
+
+input: 
+  # dataset_type: {big_stitcher, tiff_directory}
+  dataset_type: "big_stitcher"
+output: 
+  # path: public bucket location (fused data too large to fit on disk)
+  # chunksize: 5d tczyx shape
+  # compressor: {None, zstd}
+  path: "aind-open-data/"
+  chunksize: [1, 1, 128, 256, 256]
+  compressor: None
+
+algorithm_parameters: 
+  # use_gpus: True for all system GPUs, False for CPU only
+  # cell_size: zyx shape -- [1024, 512, 512] occupies 8 GPU GB.
+  # blending_function: {MaxProjection, DeepBlend}
+  use_gpus: True
+  cell_size: [1024, 512, 512]
+  blending_function: MaxProjection
+
+dataset_parameters: 
+  big_stitcher: 
+    xml_path: "YOUR_INPUT_PATH_HERE"

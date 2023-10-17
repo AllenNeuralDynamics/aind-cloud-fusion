@@ -1,100 +1,100 @@
 """
-Core Geometry Processing
+Algorithm geometry primitives and utilities.
 """
-
-from dataclasses import dataclass
-from nptyping import NDArray, Shape, Float16
 import numpy as np
-
-Vertex = NDArray(Shape["3, 1"], Float16)  # XYZ axis order
-Matrix = NDArray(Shape["3, 4"], Float16)  # XYZ axis order
-
-@dataclass
-class Polygon:
-    """
-    Bounds a 3D area with vertices. 
-    Parameters
-        vertex_coordinates: list of vertices in ***specified order***
-    """
-    vertex_coordinates: list[Vertex]
+from nptyping import NDArray, Shape
+import torch
 
 
-def axis_aligned_bounding_box(polygons: list[Polygon]
-                              ) -> Polygon:
-    """
-    Parameters
-        polygons: list of polygons to be bounded by axis-aligned bounding box.
-        Polygons expected in absolute coordinates.  
-    
-    Returns
-        AABB Polygon
-    """
-    return Polygon(...)
+Matrix: NDArray[Shape["3, 4"], np.float64]
 
-def detect_collisions(main_polygon: Polygon, 
-                      polygon_list: list[Polygon]
-                      ) -> list[Polygon]:
+class Transform:
     """
-    Parameters
-        main_polygon: central polygon to check collisions against
-        polygon_list: potential polygons that collide with main_polygon
-    
-    Returns
-        list of polygons that collide with main_poygon from the input list    
-    """
-    return list(Polygon(...))
-
-def clip(polygon_1: Polygon, 
-         polygon_2: Polygon
-         ) -> Polygon:
-    """
-    Parameters 
-        polygon_1, polygon_2: polygons to clip
-
-    Returns
-        Polygon representing overlapping region
-    """
-    return Polygon(...)
-
-def create_mask(box_polygon: Polygon, 
-                sub_polygon: Polygon, 
-                sampling_rate: float
-                ) -> np.ndarray: 
-    """
-    Parameters
-        box_polygon: Boundary polygon to be discretized
-        sub_polygon: Area inside of box_polygon to be masked
-        sampling_rate: Defines resolution of output array
-    
-    Returns
-        3D boolean mask representing sub_polygon inside of box_polygon
-    """
-    return np.ndarray
-
-
-def transform_points(points: list[Vertex], 
-                     transform_matrix: Matrix
-                     ) -> list[Vertex]: 
-    """
-    Parameters
-        points: points to transform
-        transform_matrix: homogeneous matrix
+    Registration Transform implemented in PyTorch
+    """ 
+    def forward(self, data: torch.Tensor, device: torch.device) -> torch.Tensor: 
+        raise NotImplementedError("Please implement in Transform subclass.")
         
-    Returns
-        list of transformed points
-    """
-    return list(Vertex)
+    def backward(self, data: torch.Tensor, device: torch.device) -> torch.Tensor:
+        raise NotImplementedError("Please implement in Transform subclass.")
 
 
-def transform_polygon(polygon: Polygon, 
-                      transform_matrix: Matrix
-                      ) -> Polygon:
-    """
-    Parameters
-        polygon: Polygon to transform
-        transform_matrix: homogeneous matrix
-    
-    Returns
-        transformed Polygon
-    """
-    return Polygon(...)
+class Affine(Transform):
+    def __init__(self, matrix: Matrix): 
+        super().__init__()
+        assert matrix.shape == (3, 4), 'Matrix shape is {matrix.shape}, must be (3, 4)'
+        
+        self.matrix = torch.Tensor(matrix)
+        self.matrix_3x3 = self.matrix[:, :3]
+        self.translation = self.matrix[:, 3]
+
+        self.backward_matrix_3x3 = torch.linalg.inv(self.matrix_3x3)
+        self.backward_translation = -self.translation
+
+    def forward(self, data: torch.Tensor, device: torch.device) -> torch.Tensor: 
+        """
+        Parameters:
+        -----------
+        data: (dims) + (3,)
+        data is a list/tensor of zyx vectors.  
+
+        device: {cuda:n, 'cpu'}
+        device to perform computation on.
+        
+        Returns: 
+        --------
+        transformed_data: (dims) + (3,)
+        transformed_data is identical shape to the input. 
+        transformed_data lives on the device specified
+
+        """
+        assert data.shape[-1] == 3, 'Data shape is {data.shape}, last dimension of input data must be 3d.'
+
+        # matrix: (3, 3) -> (1,)*(dims - 1) + (3, 3)
+        # data: (dims, 3) -> (dims, 3, 1)
+        # Ex: 
+        # (3, 3) -> (1, 1, 1, 3, 3)
+        # (z, y, x, 3) -> (z, y, x, 3, 1)
+        dims = len(data.shape)
+        expanded_matrix = self.matrix_3x3[(None,)*(dims - 1)].to(device)
+        expanded_data = torch.unsqueeze(data, dims).to(device)
+
+        transformed_data = expanded_matrix @ expanded_data
+        transformed_data = torch.squeeze(transformed_data, -1)
+        transformed_data = transformed_data + self.translation
+
+        return transformed_data
+
+    def backward(self, data: torch.Tensor, device: torch.device) -> torch.Tensor:
+        """
+        Parameters:
+        -----------
+        data: (dims) + (3,)
+        data is a list/tensor of zyx vectors.  
+
+        device: {cuda:n, 'cpu'}
+        device to perform computation on.
+        
+        Returns: 
+        --------
+        transformed_data: (dims) + (3,)
+        transformed_data is identical shape to the input. 
+        transformed_data lives on the device specified
+        """
+
+        assert data.shape[-1] == 3, 'Data shape is {data.shape}, last dimension of input data must be 3d.'
+
+        # matrix: (3, 3) -> (1,)*(dims - 1) + (3, 3)
+        # data: (dims, 3) -> (dims, 3, 1)
+        # Ex: 
+        # (3, 3) -> (1, 1, 1, 3, 3)
+        # (z, y, x, 3) -> (z, y, x, 3, 1)
+        dims = len(data.shape)
+        expanded_matrix = self.backward_matrix_3x3[(None,)*(dims - 1)].to(device)
+        expanded_data = torch.unsqueeze(data, dims).to(device)
+
+        transformed_data = expanded_matrix @ expanded_data
+        transformed_data = torch.squeeze(transformed_data, -1)
+        transformed_data = transformed_data + self.backward_translation
+
+        return transformed_data
