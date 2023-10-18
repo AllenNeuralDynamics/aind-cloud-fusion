@@ -31,8 +31,9 @@ class MaxProjection(BlendingModule):
         assert len(chunks) > 1, \
             f"Length of input list is {len(chunks)}, blending requires 2 or more chunks."
 
-        fused_chunk = torch.maximum(chunks[0], chunks[1])
+        fused_chunk = torch.maximum(chunks[0].to(device), chunks[1].to(device))
         for c in chunks[2:]: 
-            fused_chunk = torch.maximum()
+            c = c.to(device)
+            fused_chunk = torch.maximum(fused_chunk, c)
         
         return fused_chunk

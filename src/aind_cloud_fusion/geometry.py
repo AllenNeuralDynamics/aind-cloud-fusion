@@ -10,7 +10,8 @@ Matrix: NDArray[Shape["3, 4"], np.float64]
 
 class Transform:
     """
-    Registration Transform implemented in PyTorch
+    Registration Transform implemented in PyTorch.
+    forward/backward transforms preserve the shape of the data.
     """ 
     def forward(self, data: torch.Tensor, device: torch.device) -> torch.Tensor: 
         raise NotImplementedError("Please implement in Transform subclass.")
@@ -98,3 +99,37 @@ class Affine(Transform):
         transformed_data = transformed_data + self.backward_translation
 
         return transformed_data
+
+AABB = tuple[int, int, int, int, int, int]
+def abbb_3d(data) -> AABB:
+    """
+        Parameters:
+        -----------
+        data: (dims) + (3,)
+        data is a list/tensor of zyx vectors.  
+
+        device: {cuda:n, 'cpu'}
+        device to perform computation on.
+        
+        Returns: 
+        --------
+        aabb: Ranges ordered in same order as components in input buffer.
+    """
+    
+    assert data.shape[-1] == 3, 'Data shape is {data.shape}, last dimension of input data must be 3d.'
+    dims = len(data.shape)
+    
+    output = []
+    for i in range(dims - 1):
+        # Slice syntax:
+        # (slice(None, None, None)) => arr[:]
+        # (i) => arr[i]
+        dim_slice = [slice(None, None, None)] * (dims - 1)
+        dim_slice = tuple(dim_slice + [i])
+
+        dim_min = torch.min(data[dim_slice]).item()
+        dim_max = torch.max(data[dim_slice]).item()
+        output.append(dim_min)
+        output.append(dim_max)
+
+    return tuple(output)

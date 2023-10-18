@@ -15,10 +15,10 @@ output:
 algorithm_parameters: 
   # use_gpus: True for all system GPUs, False for CPU only
   # cell_size: zyx shape -- [1024, 512, 512] occupies 8 GPU GB.
-  # blending_function: {MaxProjection, DeepBlend}
+  # blending_module: {MaxProjection, DeepBlend}
   use_gpus: True
   cell_size: [1024, 512, 512]
-  blending_function: MaxProjection
+  blending_module: MaxProjection
 
 dataset_parameters: 
   big_stitcher: 

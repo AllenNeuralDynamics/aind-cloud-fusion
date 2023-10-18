@@ -2,12 +2,13 @@
 Defines all standard input to fusion algorithm.
 """
 from collections import OrderedDict, defaultdict
+from dataclasses import dataclass
 import numpy as np
 import xmltodict
 import yaml
 import zarr
 
-import geometry
+import aind_cloud_fusion.geometry as geometry
 
 def read_config_yaml(yaml_path: str = './config.yaml'):
     with open(yaml_path, 'r') as f:
@@ -15,9 +16,6 @@ def read_config_yaml(yaml_path: str = './config.yaml'):
     return yaml_dict
 
 class LazyArray:
-    class WriteError(Exception):
-        pass
-
     def __getitem__(self, value):
         """
         Member function for slice syntax, ex: arr[0:10, 0:10]
@@ -29,10 +27,6 @@ class LazyArray:
     def shape(self):
         raise NotImplementedError("Please implement in LazyArray subclass.")
 
-    @shape.setter
-    def shape(self, value):
-        raise LazyArray.WriteError("shape is read-only.")
-
 
 class ZarrArray(LazyArray):
     def __init__(self, arr: zarr.core.Array): 
@@ -40,61 +34,83 @@ class ZarrArray(LazyArray):
 
     def __getitem__(self, slice):
         return self.arr[slice]
-
+    
     @property
     def shape(self):
         return self.arr.shape
-    
 
 class Dataset:
+    """
+    Data and transforms are 3d zyx objects. 
+    """
     class WriteError(Exception):
         pass
 
     @property
-    def tile_volumes(self) -> list[LazyArray]:
+    def tile_volumes_zyx(self) -> dict[int, LazyArray]:
         """
-        List of tile references.
+        Dict of tile_id -> tile references.
         """
         raise NotImplementedError("Please implement in Dataset subclass.")
 
-    @tile_volumes.setter
-    def tile_volumes(self, value): 
-        raise Dataset.WriteError("tile_volumes is read-only.")
+    @tile_volumes_zyx.setter
+    def tile_volumes_zyx(self, value): 
+        raise Dataset.WriteError("tile_volumes_zyx is read-only.")
 
     @property
-    def tile_transforms(self) -> list[geometry.Transform]:
+    def tile_transforms_zyx(self) -> dict[int, geometry.Transform]:
         """
-        Corresponding list of transforms in matching order.
+        Dict of tile_id -> tile transforms
         """
         raise NotImplementedError("Please implement in Dataset subclass.")
 
-    @tile_transforms.setter
-    def tile_transforms(self, value): 
-        raise Dataset.WriteError("tile_transforms is read-only.")
+    @tile_transforms_zyx.setter
+    def tile_transforms_zyx(self, value): 
+        raise Dataset.WriteError("tile_transforms_zyx is read-only.")
+
+    @property
+    def tile_shapes_zyx(self) -> dict[int, tuple[int, int, int]]:
+        """
+        Dict of tile_id -> tile shapes
+        """
+        raise NotImplementedError("Please implement in Dataset subclass.")
+
+    @tile_shapes_zyx.setter
+    def tile_shapes_zyx(self, value):
+        raise Dataset.WriteError("tile_transforms_zyx is read-only.")
 
 
 class BigStitcherDataset(Dataset): 
-    def __init__(self, xml_file: str): 
-        self.xml_file = xml_file
+    def __init__(self, xml_path: str): 
+        self.xml_path = xml_path
 
     @property
-    def tile_volumes(self) -> dict[int, LazyArray]:
-        tile_paths = self._extract_tile_paths(self.xml_file)
+    def tile_volumes_zyx(self) -> dict[int, LazyArray]:
+        tile_paths = self._extract_tile_paths(self.xml_path)
         for t_id, t_path in tile_paths.items(): 
             tile_paths[t_id] = tile_paths[t_id] + '/0'
 
         tile_arrays: dict[int, LazyArray] = {}
         for tile_id, t_path in tile_paths.items():
             tile_zarr = zarr.open(t_path)
-            tile_arrays[tile_id] = LazyArray(tile_zarr)
+            tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
+            tile_arrays[tile_id] = LazyArray(tile_zarr_zyx)
 
         return tile_arrays
 
     @property
-    def tile_transforms(self) -> dict[int, geometry.Transform]:
-        tile_tfms = self._extract_tile_transforms(self.xml_file)
+    def tile_transforms_zyx(self) -> dict[int, geometry.Transform]:
+        tile_tfms = self._extract_tile_transforms(self.xml_path)
         tile_net_tfms = self._calculate_net_transforms(tile_tfms)
+        
         for tile_id, tfm in tile_net_tfms.items():
+            # BigStitcher XYZ -> ZYX
+            # Given Matrix 3x4: 
+            # Swap Rows 0 and 2; Swap Colums 0 and 2
+            tmp = np.copy(tfm)
+            tmp[[0, 2], :] = tmp[[2, 0], :]
+            tmp[:, [0, 2]] = tmp[:, [2, 0]]
+            tfm = tmp        
             tile_net_tfms[tile_id] = geometry.Affine(tfm)
         return tile_net_tfms
 
@@ -216,3 +232,12 @@ class BigStitcherDataset(Dataset):
             )
 
         return net_transforms
+
+
+@dataclass
+class OutputParameters:
+    path: str
+    chunksize: tuple[int, int, int, int, int]
+    dtype: np.dtype = np.uint16
+    dimension_separator: str = "/"
+    compressor: str
