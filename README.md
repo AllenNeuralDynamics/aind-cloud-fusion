@@ -15,21 +15,13 @@
 - Parallel execution across multiple GPU's
 - Deskewing and anisotropy correction
 
-### Runtime Benchmarks
-- X CPU's: __ Mb/s
-- 4 T4's: __ Mb/s
-- 4 V100's: __ Mb/s
+## Installation:
+1) Run
+```
+pip install aind-cloud-fusion
+```
 
-### Usage
-See `example_runtime.py` which reads all inputs, hyperparameters, and output from `config.yaml`.
-Inputs: 
-- Matrices must be in ZYX order.
-
-
-Outputs: 
-
-Hyperparameters:
-
+2) Please visit the PyTorch website and install the version of PyTorch compatible with your local OS and GPU hardware. All other dependencies are installed within package. 
 
 ### High-Level Algorithm
 (To be shown pictorially)
@@ -39,3 +31,28 @@ Hyperparameters:
 4) Interpolate intensity values from source images.
 5) Blend all source chunks. 
 6) Write to output image. 
+
+### Usage
+See `config.yaml` for all algorithm inputs, hyperparameters, and outputs.
+
+Additional notes on algorithm hyperparameters: 
+- output_resolution: 
+Fusion algorithm operates entirely in continous absolute coordinates and rasterizes the output volume as a final step. By default, output resolution is set to(0.5, 0.5, 0.5) to produce uniformly sized output voxels. Other options for output_resolution may include the input resolution of the raw volumes or a resolution that upsamples/downsamples in specific dimensions to prevent aliasing caused by post-registration transforms. 
+
+- cell_size:
+cell_size represents the size of the output that is colored. Fusion algorithm has option to swap between CPU and GPU runtimes. If operating with a GPU runtime, a good rule of thumb is to set the total size of cell_size equivalent to 50-70% of your local GPU memory. If operating with a CPU runtime, cell_size is arbitrary and has no significant impact on runtime. 
+
+### Runtime Benchmarks
+- X CPU's: __ Mb/s
+- 4 T4's: __ Mb/s
+- 4 V100's: __ Mb/s
+
+## Contributing
+Fusion features serveral generic components that may be extended to fit your use case: 
+- Dataset
+- Transform
+- BlendingModule 
+Add additional parameters to `config.yaml` as necessary. 
+
+## Known Issues
+Cannot compose affines w/ flow fields-- easy fix that requires looping through transform list-- low priority. 

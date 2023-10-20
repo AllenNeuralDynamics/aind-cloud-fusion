@@ -13,9 +13,16 @@ output:
   compressor: None
 
 algorithm_parameters: 
+  # post_registration_transforms: list of transforms 
+  #    to be applied after registration (such as deskewing). 
+  #    Affine transform represented as flattened zyx matrix. 
+  # output_resolution: zyx resolution in units of mm. 
   # use_gpus: True for all system GPUs, False for CPU only
   # cell_size: zyx shape -- [1024, 512, 512] occupies 8 GPU GB.
   # blending_module: {MaxProjection, DeepBlend}
+  post_registration_transforms: 
+    - [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+  output_resolution: [0.5, 0.5, 0.5]
   use_gpus: True
   cell_size: [1024, 512, 512]
   blending_module: MaxProjection
