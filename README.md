@@ -38,10 +38,14 @@ See `config.yaml` for all algorithm inputs, hyperparameters, and outputs.
 
 Additional notes on configurations: 
 - output_resolution: 
-Fusion algorithm operates entirely in continous absolute coordinates and rasterizes the output volume as a final step. By default, output resolution is set to(0.5, 0.5, 0.5) to produce uniformly sized output voxels. Other options for output_resolution may include the input resolution of the raw volumes or a resolution that upsamples/downsamples in specific dimensions to prevent aliasing caused by post-registration transforms. 
+Fusion algorithm operates entirely in continous absolute coordinates and rasterizes the output volume as a final step. By default, output resolution is set to (0.5, 0.5, 0.5) to produce uniformly sized output voxels. Other options for output_resolution may include the input resolution of the raw volumes or a resolution that upsamples/downsamples in specific dimensions to prevent aliasing caused by post-registration transforms. 
 
 - cell_size:
 cell_size represents the size of the output that is colored. Fusion algorithm has option to swap between CPU and GPU runtimes. If operating with a GPU runtime, a good rule of thumb is to set the total size of cell_size equivalent to 50-70% of your local GPU memory. If operating with a CPU runtime, cell_size is arbitrary and has no significant impact on runtime. 
+
+Additional notes on dataset:
+- Registration transforms are expected in 'voxel'/'volume' basis. Input resolution, which scales the voxels to its absolute size, is expected as a separate input. 
+Volume boundaries, as described in high-level algorithm description, go through the following transformations in this order: `registration transforms` -> `input resolution scaling` -> `post-registration transforms` -> `output resolution scaling`.
 
 ### Runtime Benchmarks
 - X CPU's: __ Mb/s
@@ -53,6 +57,7 @@ Fusion features serveral generic components that may be extended to fit your use
 - Dataset
 - Transform
 - BlendingModule 
+
 Add additional parameters to `config.yaml` as necessary. 
 
 ## Known Issues

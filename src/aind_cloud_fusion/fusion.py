@@ -51,6 +51,7 @@ def color_cell(tile_arrays: dict[int, LazyArray],
     z_length = cell_box[1] - cell_box[0]
     y_length = cell_box[3] - cell_box[2]
     x_length = cell_box[5] - cell_box[4]
+
     fused_cell = torch.zeros((1, 1, z_length, y_length, x_length)).to(device)
     for tile_id in overlapping_tiles: 
         # Init tile coords, arange end-exclusive, +0.5 to represent voxel center
@@ -197,20 +198,34 @@ def run_fusion(dataset: Dataset,
     scale_input_zyx = Affine(np.array([[iz, 0, 0, 0], 
                                        [0, iy, 0, 0], 
                                        [0, 0, ix, 0]]))
+    # Let me first try applying to the affine of the net transform. 
+
+    # for tile_id, tfm_list in tile_transforms.items():
+    #     net_transform_3x3 = tfm_list[0].matrix_3x3
+    #     nz, ny, nx = net_translation = tfm_list[0].translation
+    #     updated_translation = np.array([[iz * nz], 
+    #                                     [iy * ny], 
+    #                                     [ix * nx]])
+    #     updated_matrix = np.hstack((net_transform_3x3, updated_translation))
+    #     tile_transforms[tile_id][0] = Affine(updated_matrix)
+
     output_resolution_zyx: tuple[float, float, float] = output_params.resolution_zyx
     oz, oy, ox = output_resolution_zyx
     sample_output_zyx = Affine(np.array([[1/oz, 0, 0, 0], 
                                          [0, 1/oy, 0, 0], 
                                          [0, 0, 1/ox, 0]]))
     for tile_id, tfm_list in tile_transforms.items():
-        tile_transforms[tile_id] = [scale_input_zyx, 
-                                    *tfm_list, 
+        tile_transforms[tile_id] = [*tfm_list, 
+                                    scale_input_zyx,
                                     *post_reg_tfms,
                                     sample_output_zyx]
 
     tile_sizes_zyx: dict[int, tuple[int, int, int]] = {}
     tile_aabbs: dict[int, AABB] = {}
     tile_boundary_point_cloud_zyx = [] 
+
+    # tmp_buffer = []
+    
     for tile_id, tile_arr in tile_arrays.items():
         tile_sizes_zyx[tile_id] = zyx = tile_arr.shape
         tile_boundaries = torch.Tensor([[0., 0., 0.], 
@@ -221,13 +236,48 @@ def run_fusion(dataset: Dataset,
                         [zyx[0], 0., zyx[2]],
                         [0., zyx[1], zyx[2]],
                         [zyx[0], zyx[1], zyx[2]]])  
-          
+        
+        # Appears like affine part is not defined wrt to underlying resolution basis, but voxel basis. 
+        # Okay fine. How to resolve?
+        # First, check if this is correct. 
+        # That is, first transform's affine component must be sent through forward input resolution. 
+
         tfm_list = tile_transforms[tile_id]
-        for tfm in tfm_list: 
+        for i, tfm in enumerate(tfm_list): 
             tile_boundaries = tfm.forward(tile_boundaries, device=torch.device('cpu'))
+
+            # if i == 1: 
+            #     tmp_buffer.append(tile_boundaries.to('cpu'))
+            # # (Following registration)
+        
+        # Checking to see if removing the initial rescaling changes things: 
+        # tmp_buffer.append(tile_boundaries.to('cpu'))
+
         tile_aabbs[tile_id] = aabb_3d(tile_boundaries)
         tile_boundary_point_cloud_zyx.extend(tile_boundaries)
     tile_boundary_point_cloud_zyx = torch.stack(tile_boundary_point_cloud_zyx, dim=0)
+
+    # Bug must be related to initalization. 
+    # You can probably solve this tomorrow (Monday).
+    # import plotly.graph_objects as go
+    # import random
+    # def get_random_rgb_string():
+    #     r = random.randint(0, 255)
+    #     g = random.randint(0, 255)
+    #     b = random.randint(0, 255)
+    #     return f'rgb({r}, {g}, {b})'
+
+    # scene = []
+    # for verts in tmp_buffer:
+    #     color = get_random_rgb_string()
+    #     vert_plot = go.Scatter3d(x=verts[:, 0],
+    #                             y=verts[:, 1],
+    #                             z=verts[:, 2],
+    #                             mode='markers', 
+    #                             marker=dict(color=color, size=10))
+    #     scene.append(vert_plot)
+    # fig = go.Figure(data=scene)
+    # fig.write_html('/scratch/volume_init_new.html')
 
     # Resolve Output Volume Dimensions and Absolute Position
     global_tile_boundaries = aabb_3d(tile_boundary_point_cloud_zyx)
@@ -299,6 +349,7 @@ def run_fusion(dataset: Dataset,
                    blend_module,
                    p_args['z'], p_args['y'], p_args['x'], devices[0],
                    p_args['cell_num'], est_total_cells, LOGGER)
+    
 
     # Multithreaded execution
     """
