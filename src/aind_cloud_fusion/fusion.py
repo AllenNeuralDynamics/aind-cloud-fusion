@@ -13,7 +13,7 @@ from aind_cloud_fusion.blend import BlendingModule
 
 # Parallelized Function
 def color_cell(tile_arrays: dict[int, LazyArray], 
-               tile_transforms: dict[int, Transform], 
+               tile_transforms: dict[int, list[Transform]], 
                tile_sizes_zyx: dict[int, tuple[int, int, int]], 
                tile_aabbs: dict[int, AABB],
                output_volume: zarr.core.Array, 
@@ -28,10 +28,10 @@ def color_cell(tile_arrays: dict[int, LazyArray],
 
     # Cell Boundaries, exclusive stop index
     output_volume_size = output_volume.shape
-    cell_box = torch.Tensor([[z * cell_size[0], z * cell_size[0] + cell_size[0]], 
+    cell_box = np.array([[z * cell_size[0], z * cell_size[0] + cell_size[0]], 
                         [y * cell_size[1], y * cell_size[1] + cell_size[1]], 
                         [x * cell_size[2], x * cell_size[2] + cell_size[2]]])
-    cell_box[:, 1] = torch.minimum(cell_box[:, 1], torch.Tensor(output_volume_size))
+    cell_box[:, 1] = np.minimum(cell_box[:, 1], np.array(output_volume_size[2:]))
     cell_box = cell_box.flatten()
 
     # Collision Detection
@@ -73,10 +73,11 @@ def color_cell(tile_arrays: dict[int, LazyArray],
         # Define tile coords wrt output vol origin
         tile_coords = tile_coords + torch.Tensor(output_volume_origin).to(device)
 
-        # Send tile_coords through inverse affine
+        # Send tile_coords through inverse transforms
+        # NOTE: tile_transforms list must be iterated thru in reverse
         # (z, y, x, 3) -> (z, y, x, 3)
-        tile_tfm: Transform = tile_transforms[tile_id]
-        tile_coords = tile_tfm.backward(tile_coords, device=device)
+        for tfm in reversed(tile_transforms[tile_id]):
+            tile_coords = tfm.backward(tile_coords, device=device)
 
         # Calculate AABB of transformed coords
         z_min, z_max, y_min, y_max, x_min, x_max = aabb_3d(tile_coords)
@@ -133,7 +134,7 @@ def color_cell(tile_arrays: dict[int, LazyArray],
         interp_cob_matrix = torch.Tensor([[0, 0, 1, 0], 
                                           [0, 1, 0, 0], 
                                           [1, 0, 0, 0]])
-        interp_cob = Affine(interp_cob)
+        interp_cob = Affine(interp_cob_matrix)
         tile_coords = interp_cob.forward(tile_coords, device=device)
 
         # Interpolation expects 'grid' parameter/sample locations to be normalized [-1, 1].
@@ -141,9 +142,9 @@ def color_cell(tile_arrays: dict[int, LazyArray],
         crop_z_length = crop_max_z - crop_min_z
         crop_y_length = crop_max_y - crop_min_y
         crop_x_length = crop_max_x - crop_min_x
-        tile_coords[0, :, :, :, 0] = (tile_coords[0, :, :, :, 0] - (crop_x_length / 2)) / (crop_x_length / 2)
-        tile_coords[0, :, :, :, 1] = (tile_coords[0, :, :, :, 1] - (crop_y_length / 2)) / (crop_y_length / 2)
-        tile_coords[0, :, :, :, 2] = (tile_coords[0, :, :, :, 2] - (crop_z_length / 2)) / (crop_z_length / 2) 
+        tile_coords[:, :, :, 0] = (tile_coords[:, :, :, 0] - (crop_x_length / 2)) / (crop_x_length / 2)
+        tile_coords[:, :, :, 1] = (tile_coords[:, :, :, 1] - (crop_y_length / 2)) / (crop_y_length / 2)
+        tile_coords[:, :, :, 2] = (tile_coords[:, :, :, 2] - (crop_z_length / 2)) / (crop_z_length / 2) 
 
         # Final reshaping
         # image_crop: (z_in, y_in, x_in) -> (1, 1, z_in, y_in, x_in)
@@ -179,6 +180,7 @@ def run_fusion(dataset: Dataset,
                output_params: OutputParameters, 
                devices: list[torch.device], 
                cell_size: tuple[int, int, int],
+               post_reg_tfms: list[Affine],
                blend_module: BlendingModule):
     
     logging.basicConfig(format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M")
@@ -187,15 +189,30 @@ def run_fusion(dataset: Dataset,
 
     # Initalize Core Data Structures
     tile_arrays: dict[int, LazyArray] = dataset.tile_volumes_zyx
-    tile_transforms: dict[int, Transform] - dataset.tile_transforms_zyx
+    LOGGER.info(f'Number of Tiles: {len(tile_arrays)}')
+
+    tile_transforms: dict[int, list[Transform]] = dataset.tile_transforms_zyx
+    input_resolution_zyx: tuple[float, float, float] = dataset.tile_resolution_zyx
+    iz, iy, ix = input_resolution_zyx
+    scale_input_zyx = Affine(np.array([[iz, 0, 0, 0], 
+                                       [0, iy, 0, 0], 
+                                       [0, 0, ix, 0]]))
+    output_resolution_zyx: tuple[float, float, float] = output_params.resolution_zyx
+    oz, oy, ox = output_resolution_zyx
+    sample_output_zyx = Affine(np.array([[1/oz, 0, 0, 0], 
+                                         [0, 1/oy, 0, 0], 
+                                         [0, 0, 1/ox, 0]]))
+    for tile_id, tfm_list in tile_transforms.items():
+        tile_transforms[tile_id] = [scale_input_zyx, 
+                                    *tfm_list, 
+                                    *post_reg_tfms,
+                                    sample_output_zyx]
 
     tile_sizes_zyx: dict[int, tuple[int, int, int]] = {}
     tile_aabbs: dict[int, AABB] = {}
     tile_boundary_point_cloud_zyx = [] 
     for tile_id, tile_arr in tile_arrays.items():
         tile_sizes_zyx[tile_id] = zyx = tile_arr.shape
-
-        tile_tfm = tile_transforms[tile_id]
         tile_boundaries = torch.Tensor([[0., 0., 0.], 
                         [zyx[0], 0., 0.],
                         [0., zyx[1], 0.],
@@ -203,12 +220,14 @@ def run_fusion(dataset: Dataset,
                         [zyx[0], zyx[1], 0.],
                         [zyx[0], 0., zyx[2]],
                         [0., zyx[1], zyx[2]],
-                        [zyx[0], zyx[1], zyx[2]]])
-        tile_boundaries = tile_tfm.forward(tile_boundaries, device=torch.device('cpu'))
+                        [zyx[0], zyx[1], zyx[2]]])  
+          
+        tfm_list = tile_transforms[tile_id]
+        for tfm in tfm_list: 
+            tile_boundaries = tfm.forward(tile_boundaries, device=torch.device('cpu'))
         tile_aabbs[tile_id] = aabb_3d(tile_boundaries)
-
         tile_boundary_point_cloud_zyx.extend(tile_boundaries)
-    tile_boundary_point_cloud_zyx = torch.Tensor(tile_boundary_point_cloud_zyx)
+    tile_boundary_point_cloud_zyx = torch.stack(tile_boundary_point_cloud_zyx, dim=0)
 
     # Resolve Output Volume Dimensions and Absolute Position
     global_tile_boundaries = aabb_3d(tile_boundary_point_cloud_zyx)
@@ -251,9 +270,9 @@ def run_fusion(dataset: Dataset,
     )
 
     # Run Fusion: Define all work
-    z_stride = int(torch.ceil(OUTPUT_VOLUME_SIZE[0] / cell_size[0]))
-    y_stride = int(torch.ceil(OUTPUT_VOLUME_SIZE[1] / cell_size[1]))
-    x_stride = int(torch.ceil(OUTPUT_VOLUME_SIZE[2] / cell_size[2]))
+    z_stride = int(np.ceil(OUTPUT_VOLUME_SIZE[0] / cell_size[0]))
+    y_stride = int(np.ceil(OUTPUT_VOLUME_SIZE[1] / cell_size[1]))
+    x_stride = int(np.ceil(OUTPUT_VOLUME_SIZE[2] / cell_size[2]))
     est_total_cells = z_stride * y_stride * x_stride
     LOGGER.info(f'Estimated Total Cells: {est_total_cells}')
 
@@ -268,6 +287,21 @@ def run_fusion(dataset: Dataset,
                                       'x': x})
                 cell_num += 1
     
+    # Single threaded execution
+    for p_args in process_args:
+        color_cell(tile_arrays, 
+                   tile_transforms, 
+                   tile_sizes_zyx, 
+                   tile_aabbs, 
+                   output_volume, 
+                   OUTPUT_VOLUME_ORIGIN,
+                   cell_size, 
+                   blend_module,
+                   p_args['z'], p_args['y'], p_args['x'], devices[0],
+                   p_args['cell_num'], est_total_cells, LOGGER)
+
+    # Multithreaded execution
+    """
     # Run Fusion: Fill work queue with inital tasks
     # Task-specific info includes process_args and device. 
     if devices[0] == torch.device('cpu'): 
@@ -282,11 +316,16 @@ def run_fusion(dataset: Dataset,
     for i in range(pool_size):
         p_args = process_args.pop(0)
         p = multiprocessing.Process(target=color_cell,
-                                    args=(tile_arrays, tile_transforms, tile_sizes_zyx, tile_aabbs, 
-                                        output_volume, OUTPUT_VOLUME_SIZE, OUTPUT_VOLUME_ORIGIN,
-                                        cell_size, blend_module,
-                                        p_args['z'], p_args['y'], p_args['x'], devices[i % len(devices)],
-                                        p_args['cell_num'], est_total_cells, LOGGER))
+                                    args=(tile_arrays, 
+                                          tile_transforms, 
+                                          tile_sizes_zyx, 
+                                          tile_aabbs, 
+                                          output_volume, 
+                                          OUTPUT_VOLUME_ORIGIN,
+                                          cell_size, 
+                                          blend_module,
+                                          p_args['z'], p_args['y'], p_args['x'], devices[i % len(devices)],
+                                          p_args['cell_num'], est_total_cells, LOGGER))
         active_processes.append((devices[i % len(devices)], p))
         p.start()
     
@@ -305,14 +344,20 @@ def run_fusion(dataset: Dataset,
                 if len(process_args) != 0:
                     p_args = process_args.pop(0)
                     new_p = multiprocessing.Process(target=color_cell,
-                                        args=(tile_arrays, tile_transforms, tile_sizes_zyx, tile_aabbs, 
-                                            output_volume, OUTPUT_VOLUME_SIZE, OUTPUT_VOLUME_ORIGIN,
-                                            cell_size, blend_module,  
-                                            p_args['z'], p_args['y'], p_args['x'], device,
-                                            p_args['cell_num'], est_total_cells, LOGGER))
+                                        args=(tile_arrays, 
+                                              tile_transforms, 
+                                              tile_sizes_zyx, 
+                                              tile_aabbs, 
+                                              output_volume, 
+                                              OUTPUT_VOLUME_ORIGIN,
+                                              cell_size, 
+                                              blend_module,
+                                              p_args['z'], p_args['y'], p_args['x'], device,
+                                              p_args['cell_num'], est_total_cells, LOGGER))
                     tmp.append((device, new_p))
                     new_p.start()
 
             active_processes = tmp
 
     LOGGER.info(f'Runtime: {time.time() - start_run}')
+    """

@@ -8,25 +8,28 @@ output:
   # path: public bucket location (fused data too large to fit on disk)
   # chunksize: 5d tczyx shape
   # compressor: {None, zstd}
-  path: "aind-open-data/"
+  # output_resolution: zyx resolution in units of um (or whatever the input resolution unit is). 
+  
+  # path: "s3://aind-msma-morphology-data/test_data/diSPIM_refactor_test.zarr"
+  path: "/root/capsule/scratch/tmp_output_2.zarr"
+
   chunksize: [1, 1, 128, 256, 256]
-  compressor: None
+  resolution_zyx: [0.5, 0.5, 0.5]
 
 algorithm_parameters: 
-  # post_registration_transforms: list of transforms 
+  # post_registration_transforms_zyx: list of transforms 
   #    to be applied after registration (such as deskewing). 
-  #    Affine transform represented as flattened zyx matrix. 
-  # output_resolution: zyx resolution in units of mm. 
   # use_gpus: True for all system GPUs, False for CPU only
   # cell_size: zyx shape -- [1024, 512, 512] occupies 8 GPU GB.
   # blending_module: {MaxProjection, DeepBlend}
-  post_registration_transforms: 
-    - [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-  output_resolution: [0.5, 0.5, 0.5]
+  post_registration_transforms_zyx: 
+    - [[1, 0, -1, 0], 
+       [0, 1, 0, 0], 
+       [0, 0, 1, 0]]
   use_gpus: True
   cell_size: [1024, 512, 512]
   blending_module: MaxProjection
 
 dataset_parameters: 
   big_stitcher: 
-    xml_path: "YOUR_INPUT_PATH_HERE"
+    xml_path: "/root/capsule/data/Christian-ME-New-Lasers_stitch_output/bigstitcher_Christian-ME-New-Lasers.xml"

@@ -10,7 +10,8 @@
 
 ### Features
 - Lightweight, pure-python installation
-- Support for generic image volume file formats (zarr, n5, tiff stack) and transforms (affine, flow field)
+- Support for generic image volume file formats (zarr, n5, tiff stack) and transforms (affine, flow field). 
+Transform types compose and can be used in sequence with one another. 
 - Modular image blending (max projection, linear averaging, deep blending)
 - Parallel execution across multiple GPU's
 - Deskewing and anisotropy correction
@@ -35,7 +36,7 @@ pip install aind-cloud-fusion
 ### Usage
 See `config.yaml` for all algorithm inputs, hyperparameters, and outputs.
 
-Additional notes on algorithm hyperparameters: 
+Additional notes on configurations: 
 - output_resolution: 
 Fusion algorithm operates entirely in continous absolute coordinates and rasterizes the output volume as a final step. By default, output resolution is set to(0.5, 0.5, 0.5) to produce uniformly sized output voxels. Other options for output_resolution may include the input resolution of the raw volumes or a resolution that upsamples/downsamples in specific dimensions to prevent aliasing caused by post-registration transforms. 
 
@@ -55,4 +56,6 @@ Fusion features serveral generic components that may be extended to fit your use
 Add additional parameters to `config.yaml` as necessary. 
 
 ## Known Issues
-Cannot compose affines w/ flow fields-- easy fix that requires looping through transform list-- low priority. 
+Dask array does not load input zarr with default input chunk size. Expose input chunk size parameter. 
+
+Expose output zarr compression parameter.
