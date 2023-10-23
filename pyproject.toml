@@ -19,7 +19,10 @@ dynamic = ["version"]
 dependencies = [
     'xmltodict==0.13.0',
     'numpy==1.26.1',
-    'zarr==2.16.1'
+    'nptyping==2.5.0',
+    'zarr==2.16.1',
+    's3fs==2023.9.2', 
+    'dask==2023.10.0'
 ]
 
 [project.optional-dependencies]

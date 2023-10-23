@@ -6,7 +6,7 @@ from nptyping import NDArray, Shape
 import torch
 
 
-Matrix: NDArray[Shape["3, 4"], np.float64]
+Matrix = NDArray[Shape["3, 4"], np.float64]
 
 class Transform:
     """
@@ -62,7 +62,7 @@ class Affine(Transform):
 
         transformed_data = expanded_matrix @ expanded_data
         transformed_data = torch.squeeze(transformed_data, -1)
-        transformed_data = transformed_data + self.translation
+        transformed_data = transformed_data + self.translation.to(device)
 
         return transformed_data
 
@@ -96,12 +96,12 @@ class Affine(Transform):
 
         transformed_data = expanded_matrix @ expanded_data
         transformed_data = torch.squeeze(transformed_data, -1)
-        transformed_data = transformed_data + self.backward_translation
+        transformed_data = transformed_data + self.backward_translation.to(device)
 
         return transformed_data
 
 AABB = tuple[int, int, int, int, int, int]
-def abbb_3d(data) -> AABB:
+def aabb_3d(data) -> AABB:
     """
         Parameters:
         -----------
@@ -120,7 +120,7 @@ def abbb_3d(data) -> AABB:
     dims = len(data.shape)
     
     output = []
-    for i in range(dims - 1):
+    for i in range(3):
         # Slice syntax:
         # (slice(None, None, None)) => arr[:]
         # (i) => arr[i]

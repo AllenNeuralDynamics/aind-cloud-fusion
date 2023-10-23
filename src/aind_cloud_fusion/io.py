@@ -3,10 +3,11 @@ Defines all standard input to fusion algorithm.
 """
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
+import dask.array as da
 import numpy as np
 import xmltodict
 import yaml
-import zarr
+
 
 import aind_cloud_fusion.geometry as geometry
 
@@ -29,11 +30,11 @@ class LazyArray:
 
 
 class ZarrArray(LazyArray):
-    def __init__(self, arr: zarr.core.Array): 
+    def __init__(self, arr: da.Array): 
         self.arr = arr
 
     def __getitem__(self, slice):
-        return self.arr[slice]
+        return self.arr[slice].compute()
     
     @property
     def shape(self):
@@ -60,7 +61,7 @@ class Dataset:
     @property
     def tile_transforms_zyx(self) -> dict[int, geometry.Transform]:
         """
-        Dict of tile_id -> tile transforms
+        Dict of tile_id -> tile transforms.
         """
         raise NotImplementedError("Please implement in Dataset subclass.")
 
@@ -79,6 +80,18 @@ class Dataset:
     def tile_shapes_zyx(self, value):
         raise Dataset.WriteError("tile_transforms_zyx is read-only.")
 
+    @property
+    def tile_resolution_zyx(self) -> tuple[float, float, float]:
+        """
+        Specifies absolute size of each voxel in tile volume. 
+        Tile resolution is used to scale tile volume into absolute space prior to registration. 
+        """
+        raise NotImplementedError("Please implement in Dataset subclass.")
+
+    @tile_resolution_zyx.setter
+    def tile_resolution_zyx(self, value):
+        raise Dataset.WriteError("tile_resolution_zyx is read-only.")
+
 
 class BigStitcherDataset(Dataset): 
     def __init__(self, xml_path: str): 
@@ -92,14 +105,14 @@ class BigStitcherDataset(Dataset):
 
         tile_arrays: dict[int, LazyArray] = {}
         for tile_id, t_path in tile_paths.items():
-            tile_zarr = zarr.open(t_path)
+            tile_zarr = da.from_zarr(t_path)
             tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
-            tile_arrays[tile_id] = LazyArray(tile_zarr_zyx)
+            tile_arrays[tile_id] = ZarrArray(tile_zarr_zyx)
 
         return tile_arrays
 
     @property
-    def tile_transforms_zyx(self) -> dict[int, geometry.Transform]:
+    def tile_transforms_zyx(self) -> dict[int, list[geometry.Transform]]:
         tile_tfms = self._extract_tile_transforms(self.xml_path)
         tile_net_tfms = self._calculate_net_transforms(tile_tfms)
         
@@ -111,8 +124,20 @@ class BigStitcherDataset(Dataset):
             tmp[[0, 2], :] = tmp[[2, 0], :]
             tmp[:, [0, 2]] = tmp[:, [2, 0]]
             tfm = tmp        
-            tile_net_tfms[tile_id] = geometry.Affine(tfm)
+
+            # Pack into list
+            tile_net_tfms[tile_id] = [geometry.Affine(tfm)]
+
         return tile_net_tfms
+
+    @property
+    def tile_resolution_zyx(self) -> tuple[float, float, float]:
+        with open(self.xml_path, "r") as file:
+            data: OrderedDict = xmltodict.parse(file.read())
+
+        resolution_str = data["SpimData"]["SequenceDescription"]["ViewSetups"]["ViewSetup"][0]['voxelSize']['size']
+        resolution_xyz = [float(num) for num in resolution_str.split(" ")]
+        return tuple(resolution_xyz[::-1])
 
     def _extract_tile_paths(self, xml_path: str) -> dict[int, str]:
         """
@@ -238,6 +263,7 @@ class BigStitcherDataset(Dataset):
 class OutputParameters:
     path: str
     chunksize: tuple[int, int, int, int, int]
+    resolution_zyx: tuple[float, float, float]
     dtype: np.dtype = np.uint16
     dimension_separator: str = "/"
-    compressor: str
+    compressor: str = None
