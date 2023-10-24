@@ -108,9 +108,6 @@ def aabb_3d(data) -> AABB:
         data: (dims) + (3,)
         data is a list/tensor of zyx vectors.  
 
-        device: {cuda:n, 'cpu'}
-        device to perform computation on.
-        
         Returns: 
         --------
         aabb: Ranges ordered in same order as components in input buffer.

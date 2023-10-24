@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import multiprocessing as mp
 
 import aind_cloud_fusion.io as io
 import aind_cloud_fusion.blend as blend
@@ -44,4 +45,7 @@ def main():
     # Multiscaling, which is CPU-bound, can be standalone capsule to save on GPU costs.
 
 if __name__ == "__main__":
+    # mp.set_start_method('spawn', force=True)
+    mp.set_start_method('forkserver', force=True)
+    torch.cuda.empty_cache()
     main()

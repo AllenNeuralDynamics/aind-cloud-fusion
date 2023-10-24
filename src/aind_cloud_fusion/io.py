@@ -230,9 +230,9 @@ class BigStitcherDataset(Dataset):
         identity_transform = np.array(
         [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
         )
-        net_transforms: dict[int, np.ndarray] = defaultdict(
-            lambda: np.copy(identity_transform)
-        )
+        net_transforms: dict[int, np.ndarray] = {}
+        for tile_id in view_transforms: 
+            net_transforms[tile_id] = np.copy(identity_transform)
 
         for view, tfs in view_transforms.items():
             net_translation = np.zeros(3)

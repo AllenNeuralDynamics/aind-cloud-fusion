@@ -1,5 +1,4 @@
 # Application input
-# User should only need to edit this file to run fusion algorithm
 
 input: 
   # dataset_type: {big_stitcher, tiff_directory}
@@ -11,7 +10,7 @@ output:
   # output_resolution: zyx resolution in units of um (or whatever the input resolution unit is). 
   
   # path: "s3://aind-msma-morphology-data/test_data/diSPIM_refactor_test.zarr"
-  path: "/root/capsule/scratch/tmp_output_3.zarr"
+  path: "/root/capsule/scratch/tmp_output_4.zarr"
 
   chunksize: [1, 1, 128, 256, 256]
   resolution_zyx: [0.5, 0.5, 0.5]
@@ -27,7 +26,7 @@ algorithm_parameters:
        [0, 1, 0, 0], 
        [0, 0, 1, 0]]
   use_gpus: True
-  cell_size: [1024, 512, 512]
+  cell_size: [512, 512, 512]
   blending_module: MaxProjection
 
 dataset_parameters: 

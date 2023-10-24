@@ -21,10 +21,9 @@ def color_cell(tile_arrays: dict[int, LazyArray],
                cell_size: tuple[int, int, int], 
                blend_module: BlendingModule,  
                z: int, y: int, x: int, device: torch.device, 
-               cell_num: int, est_total_cells: int, logger: logging.Logger): 
+               logger: logging.Logger): 
     
     LOGGER = logger
-    start_cell = time.time()
 
     # Cell Boundaries, exclusive stop index
     output_volume_size = output_volume.shape
@@ -174,8 +173,6 @@ def color_cell(tile_arrays: dict[int, LazyArray],
     
     del fused_cell
 
-    LOGGER.info(f'Cell {cell_num}/{est_total_cells}: {time.time() - start_cell}')
-
 
 def run_fusion(dataset: Dataset,
                output_params: OutputParameters, 
@@ -198,16 +195,6 @@ def run_fusion(dataset: Dataset,
     scale_input_zyx = Affine(np.array([[iz, 0, 0, 0], 
                                        [0, iy, 0, 0], 
                                        [0, 0, ix, 0]]))
-    # Let me first try applying to the affine of the net transform. 
-
-    # for tile_id, tfm_list in tile_transforms.items():
-    #     net_transform_3x3 = tfm_list[0].matrix_3x3
-    #     nz, ny, nx = net_translation = tfm_list[0].translation
-    #     updated_translation = np.array([[iz * nz], 
-    #                                     [iy * ny], 
-    #                                     [ix * nx]])
-    #     updated_matrix = np.hstack((net_transform_3x3, updated_translation))
-    #     tile_transforms[tile_id][0] = Affine(updated_matrix)
 
     output_resolution_zyx: tuple[float, float, float] = output_params.resolution_zyx
     oz, oy, ox = output_resolution_zyx
@@ -237,11 +224,6 @@ def run_fusion(dataset: Dataset,
                         [0., zyx[1], zyx[2]],
                         [zyx[0], zyx[1], zyx[2]]])  
         
-        # Appears like affine part is not defined wrt to underlying resolution basis, but voxel basis. 
-        # Okay fine. How to resolve?
-        # First, check if this is correct. 
-        # That is, first transform's affine component must be sent through forward input resolution. 
-
         tfm_list = tile_transforms[tile_id]
         for i, tfm in enumerate(tfm_list): 
             tile_boundaries = tfm.forward(tile_boundaries, device=torch.device('cpu'))
@@ -338,6 +320,7 @@ def run_fusion(dataset: Dataset,
                 cell_num += 1
     
     # Single threaded execution
+    """
     for p_args in process_args:
         color_cell(tile_arrays, 
                    tile_transforms, 
@@ -348,11 +331,11 @@ def run_fusion(dataset: Dataset,
                    cell_size, 
                    blend_module,
                    p_args['z'], p_args['y'], p_args['x'], devices[0],
-                   p_args['cell_num'], est_total_cells, LOGGER)
-    
+                   LOGGER)
+    """
 
     # Multithreaded execution
-    """
+    
     # Run Fusion: Fill work queue with inital tasks
     # Task-specific info includes process_args and device. 
     if devices[0] == torch.device('cpu'): 
@@ -363,7 +346,7 @@ def run_fusion(dataset: Dataset,
         LOGGER.info(f'GPU Runtime: Using {pool_size} GPUs')
     
     start_run = time.time()
-    active_processes: list[tuple] = []
+    active_processes: list[tuple] = []   # (process, device, cell_num, start_time)
     for i in range(pool_size):
         p_args = process_args.pop(0)
         p = multiprocessing.Process(target=color_cell,
@@ -376,21 +359,24 @@ def run_fusion(dataset: Dataset,
                                           cell_size, 
                                           blend_module,
                                           p_args['z'], p_args['y'], p_args['x'], devices[i % len(devices)],
-                                          p_args['cell_num'], est_total_cells, LOGGER))
-        active_processes.append((devices[i % len(devices)], p))
+                                          LOGGER))
+        # active_processes.append((devices[i % len(devices)], p))
+        active_processes.append((p, devices[i % len(devices)], p_args["cell_num"], time.time()))
+        LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
         p.start()
     
     # Run Fusion: Exhaust all the tasks 
     # Tasks all implictly defined in process_args buffer
     while len(active_processes) != 0: 
         tmp = []
-        for (device, p) in active_processes:
+        for (p, device, cell_num, start_time) in active_processes:
             p.join(timeout=0)   # timeout indicates do not wait until the process is explicitly finished
 
             if p.is_alive():
-                tmp.append((device, p))
+                tmp.append((p, device, cell_num, start_time))
             else:
                 p.close()
+                LOGGER.info(f'Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}')
 
                 if len(process_args) != 0:
                     p_args = process_args.pop(0)
@@ -404,11 +390,11 @@ def run_fusion(dataset: Dataset,
                                               cell_size, 
                                               blend_module,
                                               p_args['z'], p_args['y'], p_args['x'], device,
-                                              p_args['cell_num'], est_total_cells, LOGGER))
-                    tmp.append((device, new_p))
+                                              LOGGER))
+                    tmp.append((new_p, device, p_args["cell_num"], time.time()))
+                    LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
                     new_p.start()
 
             active_processes = tmp
 
     LOGGER.info(f'Runtime: {time.time() - start_run}')
-    """
