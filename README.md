@@ -61,6 +61,11 @@ Fusion features serveral generic components that may be extended to fit your use
 Add additional parameters to `config.yaml` as necessary. 
 
 ## Known Issues
-Dask array does not load input zarr with default input chunk size. Expose input chunk size parameter. 
+- Dask array does not load input zarr with default input chunk size. Expose input chunk size parameter. 
 
-Expose output zarr compression parameter.
+- Expose output zarr compression parameter.
+
+## Suggested Features: 
+- Flow Field/Deformation Transform Implementation
+
+- Blend Masking 
