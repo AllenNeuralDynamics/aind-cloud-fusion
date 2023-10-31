@@ -174,12 +174,27 @@ def color_cell(tile_arrays: dict[int, LazyArray],
     del fused_cell
 
 
+def get_cell_count_zyx(output_volume_size: tuple[int, int, int], 
+                       cell_size: tuple[int, int, int]
+                       ) -> tuple[int, int, int]:
+    """
+    Total amount of z,y, and x cells returned in that order. 
+    Input sizes are in canonical zyx order. 
+    """
+    z_cnt = int(np.ceil(OUTPUT_VOLUME_SIZE[0] / cell_size[0]))
+    y_cnt = int(np.ceil(OUTPUT_VOLUME_SIZE[1] / cell_size[1]))
+    x_cnt = int(np.ceil(OUTPUT_VOLUME_SIZE[2] / cell_size[2]))
+
+    return z_cnt, y_cnt, x_cnt
+
+
 def run_fusion(dataset: Dataset,
                output_params: OutputParameters, 
                devices: list[torch.device], 
                cell_size: tuple[int, int, int],
                post_reg_tfms: list[Affine],
-               blend_module: BlendingModule):
+               blend_module: BlendingModule, 
+               worker_cells: list[tuple[int, int, int]]):
     
     logging.basicConfig(format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M")
     LOGGER = logging.getLogger(__name__)
@@ -210,8 +225,6 @@ def run_fusion(dataset: Dataset,
     tile_sizes_zyx: dict[int, tuple[int, int, int]] = {}
     tile_aabbs: dict[int, AABB] = {}
     tile_boundary_point_cloud_zyx = [] 
-
-    # tmp_buffer = []
     
     for tile_id, tile_arr in tile_arrays.items():
         tile_sizes_zyx[tile_id] = zyx = tile_arr.shape
@@ -228,38 +241,9 @@ def run_fusion(dataset: Dataset,
         for i, tfm in enumerate(tfm_list): 
             tile_boundaries = tfm.forward(tile_boundaries, device=torch.device('cpu'))
 
-            # if i == 1: 
-            #     tmp_buffer.append(tile_boundaries.to('cpu'))
-            # # (Following registration)
-        
-        # Checking to see if removing the initial rescaling changes things: 
-        # tmp_buffer.append(tile_boundaries.to('cpu'))
-
         tile_aabbs[tile_id] = aabb_3d(tile_boundaries)
         tile_boundary_point_cloud_zyx.extend(tile_boundaries)
     tile_boundary_point_cloud_zyx = torch.stack(tile_boundary_point_cloud_zyx, dim=0)
-
-    # Bug must be related to initalization. 
-    # You can probably solve this tomorrow (Monday).
-    # import plotly.graph_objects as go
-    # import random
-    # def get_random_rgb_string():
-    #     r = random.randint(0, 255)
-    #     g = random.randint(0, 255)
-    #     b = random.randint(0, 255)
-    #     return f'rgb({r}, {g}, {b})'
-
-    # scene = []
-    # for verts in tmp_buffer:
-    #     color = get_random_rgb_string()
-    #     vert_plot = go.Scatter3d(x=verts[:, 0],
-    #                             y=verts[:, 1],
-    #                             z=verts[:, 2],
-    #                             mode='markers', 
-    #                             marker=dict(color=color, size=10))
-    #     scene.append(vert_plot)
-    # fig = go.Figure(data=scene)
-    # fig.write_html('/scratch/volume_init_new.html')
 
     # Resolve Output Volume Dimensions and Absolute Position
     global_tile_boundaries = aabb_3d(tile_boundary_point_cloud_zyx)
@@ -302,23 +286,31 @@ def run_fusion(dataset: Dataset,
     )
 
     # Run Fusion: Define all work
-    z_stride = int(np.ceil(OUTPUT_VOLUME_SIZE[0] / cell_size[0]))
-    y_stride = int(np.ceil(OUTPUT_VOLUME_SIZE[1] / cell_size[1]))
-    x_stride = int(np.ceil(OUTPUT_VOLUME_SIZE[2] / cell_size[2]))
-    est_total_cells = z_stride * y_stride * x_stride
+    z_cnt, z_cnt, z_cnt = get_cell_count_zyx(OUTPUT_VOLUME_SIZE, cell_size)
+    est_total_cells = z_cnt * z_cnt * z_cnt
     LOGGER.info(f'Estimated Total Cells: {est_total_cells}')
 
     process_args: list[dict] = []
-    cell_num = 0
-    for z in range(z_stride):
-        for y in range(y_stride): 
-            for x in range(x_stride):
-                process_args.append({'cell_num': cell_num, 
-                                      'z': z, 
-                                      'y': y, 
-                                      'x': x})
-                cell_num += 1
-    
+    if len(worker_cells) == 0: 
+        cell_num = 0
+        for z in range(z_cnt):
+            for y in range(y_cnt): 
+                for x in range(x_cnt):
+                    process_args.append({'cell_num': cell_num, 
+                                        'z': z, 
+                                        'y': y, 
+                                        'x': x})
+                    cell_num += 1
+    else: 
+        cell_num = 0
+        for cell_coord in worker_cells:
+            z, y, x = cell_coord 
+            process_args.append({'cell_num': cell_num, 
+                                 'z': z, 
+                                 'y': y, 
+                                 'x': x})
+            cell_num += 1
+
     # Single threaded execution
     """
     for p_args in process_args:
@@ -339,17 +331,18 @@ def run_fusion(dataset: Dataset,
     # Run Fusion: Fill work queue with inital tasks
     # Task-specific info includes process_args and device. 
     if devices[0] == torch.device('cpu'): 
-        pool_size = os.cpu_count() // 2
+        pool_size = os.cpu_count() // 3
         LOGGER.info(f'CPU Runtime: Using {pool_size} CPUs')
     else: 
         pool_size = len(devices)
         LOGGER.info(f'GPU Runtime: Using {pool_size} GPUs')
     
+
     start_run = time.time()
     active_processes: list[tuple] = []   # (process, device, cell_num, start_time)
     for i in range(pool_size):
         p_args = process_args.pop(0)
-        p = multiprocessing.Process(target=color_cell,
+        p = torch.multiprocessing.Process(target=color_cell,
                                     args=(tile_arrays, 
                                           tile_transforms, 
                                           tile_sizes_zyx, 
@@ -380,7 +373,7 @@ def run_fusion(dataset: Dataset,
 
                 if len(process_args) != 0:
                     p_args = process_args.pop(0)
-                    new_p = multiprocessing.Process(target=color_cell,
+                    new_p = torch.multiprocessing.Process(target=color_cell,
                                         args=(tile_arrays, 
                                               tile_transforms, 
                                               tile_sizes_zyx, 
