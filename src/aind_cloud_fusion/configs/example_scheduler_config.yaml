@@ -1,9 +1,19 @@
-# Example SoloNode Configuration File
+# Example Scheduler Configuration File
 # Compute configuration files are identical 
 # except for 'runtime' parameters.
 
 runtime: 
-  distributed: False
+  # use_gpus: {True, False}
+  use_gpus: False
+  pool_size: 16
+
+  # worker_yml_path: 
+  # num_workers: number of workers to create
+  #   worker configuration files for.
+  scheduler: 
+    worker_yml_path: "/results"
+    num_workers: 24
+
 
 input: 
   # dataset_type: {big_stitcher, tiff_directory}
@@ -30,7 +40,6 @@ algorithm_parameters:
     - [[1, 0, -1, 0], 
        [0, 1, 0, 0], 
        [0, 0, 1, 0]]
-  use_gpus: False
   cell_size: [512, 512, 512]
   blending_module: MaxProjection
 
