@@ -7,19 +7,258 @@ import zarr
 import logging
 import time
 
-from aind_cloud_fusion.io import Dataset, LazyArray, OutputParameters
-from aind_cloud_fusion.geometry import Transform, Affine, AABB, aabb_3d
-from aind_cloud_fusion.blend import BlendingModule
+import aind_cloud_fusion.io as io
+import aind_cloud_fusion.geometry as geometry
+import aind_cloud_fusion.blend as blend
+import aind_cloud_fusion.runtime as runtime
+
+
+def initialize_fusion(dataset: io.Dataset, 
+                      output_parameters: io.OutputParameters
+                      ) -> tuple[dict, dict, dict, dict, tuple, tuple, torch.Tensor]: 
+    """
+    Creates all core fusion data structures and key algorithm inputs. 
+
+    Inputs
+    ------
+    Dataset, OutputParameters application primitives. 
+
+    Returns
+    -------
+    tile_arrays: Dictionary of lazy tile arrays
+    tile_transforms: Dictionary of (list of) registrations associated with each tile
+    tile_sizes: Dictionary of tile sizes
+    tile_aabbs: Dictionary of AABB of each transformed tile
+    output_volume_size: Size of output volume
+    output_volume_origin: Location of output volume
+    """
+    
+    tile_arrays: dict[int, io.LazyArray] = dataset.tile_volumes_zyx
+
+    tile_transforms: dict[int, list[geometry.Transform]] = dataset.tile_transforms_zyx
+    input_resolution_zyx: tuple[float, float, float] = dataset.tile_resolution_zyx
+    iz, iy, ix = input_resolution_zyx
+    scale_input_zyx = geometry.Affine(np.array([[iz, 0, 0, 0], 
+                                       [0, iy, 0, 0], 
+                                       [0, 0, ix, 0]]))
+
+    output_resolution_zyx: tuple[float, float, float] = output_params.resolution_zyx
+    oz, oy, ox = output_resolution_zyx
+    sample_output_zyx = geometry.Affine(np.array([[1/oz, 0, 0, 0], 
+                                         [0, 1/oy, 0, 0], 
+                                         [0, 0, 1/ox, 0]]))
+    for tile_id, tfm_list in tile_transforms.items():
+        tile_transforms[tile_id] = [*tfm_list, 
+                                    scale_input_zyx,
+                                    *post_reg_tfms,
+                                    sample_output_zyx]
+
+    tile_sizes_zyx: dict[int, tuple[int, int, int]] = {}
+    tile_aabbs: dict[int, geometry.AABB] = {}
+    tile_boundary_point_cloud_zyx = [] 
+    
+    for tile_id, tile_arr in tile_arrays.items():
+        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape
+        tile_boundaries = torch.Tensor([[0., 0., 0.], 
+                        [zyx[0], 0., 0.],
+                        [0., zyx[1], 0.],
+                        [0., 0., zyx[2]],
+                        [zyx[0], zyx[1], 0.],
+                        [zyx[0], 0., zyx[2]],
+                        [0., zyx[1], zyx[2]],
+                        [zyx[0], zyx[1], zyx[2]]])  
+        
+        tfm_list = tile_transforms[tile_id]
+        for i, tfm in enumerate(tfm_list): 
+            tile_boundaries = tfm.forward(tile_boundaries, device=torch.device('cpu'))
+
+        tile_aabbs[tile_id] = geometry.aabb_3d(tile_boundaries)
+        tile_boundary_point_cloud_zyx.extend(tile_boundaries)
+    tile_boundary_point_cloud_zyx = torch.stack(tile_boundary_point_cloud_zyx, dim=0)
+
+    # Resolve Output Volume Dimensions and Absolute Position
+    global_tile_boundaries = geometry.aabb_3d(tile_boundary_point_cloud_zyx)
+    OUTPUT_VOLUME_SIZE = (int(global_tile_boundaries[1] - global_tile_boundaries[0]), 
+                          int(global_tile_boundaries[3] - global_tile_boundaries[2]),
+                          int(global_tile_boundaries[5] - global_tile_boundaries[4]))
+
+    OUTPUT_VOLUME_ORIGIN = torch.Tensor([
+        torch.min(tile_boundary_point_cloud_zyx[:, 0]).item(),
+        torch.min(tile_boundary_point_cloud_zyx[:, 1]).item(),
+        torch.min(tile_boundary_point_cloud_zyx[:, 2]).item()
+    ])
+    
+    # Shift AABB's into Output Volume where
+    # absolute position of output volume is moved to (0, 0, 0)
+    for tile_id, t_aabb in tile_aabbs.items():
+        updated_aabb = (t_aabb[0] - OUTPUT_VOLUME_ORIGIN[0], t_aabb[1] - OUTPUT_VOLUME_ORIGIN[0],
+                        t_aabb[2] - OUTPUT_VOLUME_ORIGIN[1], t_aabb[3] - OUTPUT_VOLUME_ORIGIN[1], 
+                        t_aabb[4] - OUTPUT_VOLUME_ORIGIN[2], t_aabb[5] - OUTPUT_VOLUME_ORIGIN[2])
+        tile_aabbs[tile_id] = updated_aabb 
+
+    return tile_arrays, tile_transforms, tile_sizes, tile_aabbs, OUTPUT_VOLUME_SIZE, OUTPUT_VOLUME_ORIGIN
+
+
+def initalize_output_volume(output_parameters: io.OutputParameters, 
+                            output_volume_size: tuple[int, int, int]
+                            ) -> zarr.core.Array: 
+    """
+    Self-documentation of output store initialization. 
+
+    Inputs
+    ------
+    output_parameters: OutputParameters application instance.
+    output_volume_size: output of initalize_data_structures(...)
+
+    Returns
+    -------
+    Zarr thread-safe datastore initialized on OutputParameters. 
+    """
+
+    out_group = zarr.open_group(output_params.path, mode='w')
+    path = "0"
+    chunksize = output_params.chunksize
+    datatype = output_params.dtype
+    dimension_separator = "/"
+    compressor = output_params.compressor    
+    global output_volume
+    output_volume = out_group.create_dataset(
+        path,
+        shape=(1, 1, output_volume_size[0], output_volume_size[1], output_volume_size[2]),
+        chunks=chunksize,
+        dtype=datatype,
+        compressor=compressor,
+        dimension_separator=dimension_separator,
+        overwrite=True,
+        fill_value=0
+    )
+
+    return output_volume
+
+
+def get_cell_count_zyx(output_volume_size: tuple[int, int, int], 
+                       cell_size: tuple[int, int, int]
+                       ) -> tuple[int, int, int]:
+    """
+    Total amount of z,y, and x cells returned in that order. 
+    Input sizes are in canonical zyx order. 
+    """
+    z_cnt = int(np.ceil(output_volume_size[0] / cell_size[0]))
+    y_cnt = int(np.ceil(output_volume_size[1] / cell_size[1]))
+    x_cnt = int(np.ceil(output_volume_size[2] / cell_size[2]))
+
+    return z_cnt, y_cnt, x_cnt
+
+
+def run_fusion(dataset: io.Dataset,
+               output_params: io.OutputParameters,
+               runtime_params: runtime.RuntimeParameters, 
+               cell_size: tuple[int, int, int],
+               post_reg_tfms: list[geometry.Affine],
+               blend_module: blend.BlendingModule):
+    
+    logging.basicConfig(format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M")
+    LOGGER = logging.getLogger(__name__)
+    LOGGER.setLevel(logging.INFO)
+
+    a, b, c, d, e, f = initialize_fusion(dataset, output_params)
+    tile_arrays = a   
+    tile_transforms = b
+    tile_sizes = c
+    tile_aabbs = d
+    output_volume_size = e  
+    output_volume_origin = f # Temp variables to meet line character maximum. 
+    output_volume = initalize_output_volume(output_params, output_volume_size)
+    LOGGER.info(f'Number of Tiles: {len(tile_arrays)}')
+    LOGGER.info(f'{output_volume_size=}')
+
+    # Run Fusion: Define all work
+    z_cnt, z_cnt, z_cnt = get_cell_count_zyx(output_volume_size, cell_size)
+    est_total_cells = z_cnt * z_cnt * z_cnt
+    LOGGER.info(f'Estimated Total Cells: {est_total_cells}')
+
+    process_args: list[dict] = []
+    cell_num = 0
+    for z in range(z_cnt):
+        for y in range(y_cnt): 
+            for x in range(x_cnt):
+                process_args.append({'cell_num': cell_num, 
+                                    'z': z, 
+                                    'y': y, 
+                                    'x': x})
+                cell_num += 1
+
+    # Run Fusion: Fill work queue with inital tasks
+    # Task-specific info includes process_args and device.     
+    if runtime_params.use_gpus:
+        LOGGER.info(f'GPU Runtime: Using {runtime_params.pool_size} GPUs')
+    else: 
+        LOGGER.info(f'CPU Runtime: Using {runtime_params.pool_size} CPUs')
+    start_run = time.time()
+    active_processes: list[tuple] = []   # (process, device, cell_num, start_time)
+    for i in range(runtime_params.pool_size):
+        p_args = process_args.pop(0)
+        p = torch.multiprocessing.Process(target=color_cell,
+                                    args=(tile_arrays, 
+                                          tile_transforms, 
+                                          tile_sizes_zyx, 
+                                          tile_aabbs, 
+                                          output_volume, 
+                                          output_volume_origin,
+                                          cell_size, 
+                                          blend_module,
+                                          p_args['z'], p_args['y'], p_args['x'], 
+                                          runtime_params.devices[i % len(runtime_params.devices)],
+                                          LOGGER))
+        active_processes.append((p, runtime_params.devices[i % len(runtime_params.devices)], 
+                                p_args["cell_num"], time.time()))
+        LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
+        p.start()
+    
+    # Run Fusion: Exhaust all the tasks 
+    # Tasks all implictly defined in process_args buffer
+    while len(active_processes) != 0: 
+        tmp = []
+        for (p, device, cell_num, start_time) in active_processes:
+            p.join(timeout=0)   # timeout indicates do not wait until the process is explicitly finished
+
+            if p.is_alive():
+                tmp.append((p, device, cell_num, start_time))
+            else:
+                p.close()
+                LOGGER.info(f'Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}')
+
+                if len(process_args) != 0:
+                    p_args = process_args.pop(0)
+                    new_p = torch.multiprocessing.Process(target=color_cell,
+                                        args=(tile_arrays, 
+                                              tile_transforms, 
+                                              tile_sizes_zyx, 
+                                              tile_aabbs, 
+                                              output_volume, 
+                                              output_volume_origin,
+                                              cell_size, 
+                                              blend_module,
+                                              p_args['z'], p_args['y'], p_args['x'], device,
+                                              LOGGER))
+                    tmp.append((new_p, device, p_args["cell_num"], time.time()))
+                    LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
+                    new_p.start()
+
+            active_processes = tmp
+
+    LOGGER.info(f'Runtime: {time.time() - start_run}')
+
 
 # Parallelized Function
-def color_cell(tile_arrays: dict[int, LazyArray], 
-               tile_transforms: dict[int, list[Transform]], 
+def color_cell(tile_arrays: dict[int, io.LazyArray], 
+               tile_transforms: dict[int, list[geometry.Transform]], 
                tile_sizes_zyx: dict[int, tuple[int, int, int]], 
-               tile_aabbs: dict[int, AABB],
+               tile_aabbs: dict[int, geometry.AABB],
                output_volume: zarr.core.Array, 
                output_volume_origin: torch.Tensor, 
                cell_size: tuple[int, int, int], 
-               blend_module: BlendingModule,  
+               blend_module: blend.BlendingModule,  
                z: int, y: int, x: int, device: torch.device, 
                logger: logging.Logger): 
     
@@ -80,7 +319,7 @@ def color_cell(tile_arrays: dict[int, LazyArray],
             tile_coords = tfm.backward(tile_coords, device=device)
 
         # Calculate AABB of transformed coords
-        z_min, z_max, y_min, y_max, x_min, x_max = aabb_3d(tile_coords)
+        z_min, z_max, y_min, y_max, x_min, x_max = geometry.aabb_3d(tile_coords)
 
         # Mini Optimization: Check true collision before executing interpolation/fusion
         # That is, aabb of transformed coordinates into imagespace actually overlap the image. 
@@ -134,7 +373,7 @@ def color_cell(tile_arrays: dict[int, LazyArray],
         interp_cob_matrix = torch.Tensor([[0, 0, 1, 0], 
                                           [0, 1, 0, 0], 
                                           [1, 0, 0, 0]])
-        interp_cob = Affine(interp_cob_matrix)
+        interp_cob = geometry.Affine(interp_cob_matrix)
         tile_coords = interp_cob.forward(tile_coords, device=device)
 
         # Interpolation expects 'grid' parameter/sample locations to be normalized [-1, 1].
@@ -172,222 +411,3 @@ def color_cell(tile_arrays: dict[int, LazyArray],
     output_volume[output_slice] = output_chunk
     
     del fused_cell
-
-
-def get_cell_count_zyx(output_volume_size: tuple[int, int, int], 
-                       cell_size: tuple[int, int, int]
-                       ) -> tuple[int, int, int]:
-    """
-    Total amount of z,y, and x cells returned in that order. 
-    Input sizes are in canonical zyx order. 
-    """
-    z_cnt = int(np.ceil(OUTPUT_VOLUME_SIZE[0] / cell_size[0]))
-    y_cnt = int(np.ceil(OUTPUT_VOLUME_SIZE[1] / cell_size[1]))
-    x_cnt = int(np.ceil(OUTPUT_VOLUME_SIZE[2] / cell_size[2]))
-
-    return z_cnt, y_cnt, x_cnt
-
-
-def run_fusion(dataset: Dataset,
-               output_params: OutputParameters, 
-               devices: list[torch.device], 
-               cell_size: tuple[int, int, int],
-               post_reg_tfms: list[Affine],
-               blend_module: BlendingModule, 
-               worker_cells: list[tuple[int, int, int]]):
-    
-    logging.basicConfig(format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M")
-    LOGGER = logging.getLogger(__name__)
-    LOGGER.setLevel(logging.INFO)
-
-    # Initalize Core Data Structures
-    tile_arrays: dict[int, LazyArray] = dataset.tile_volumes_zyx
-    LOGGER.info(f'Number of Tiles: {len(tile_arrays)}')
-
-    tile_transforms: dict[int, list[Transform]] = dataset.tile_transforms_zyx
-    input_resolution_zyx: tuple[float, float, float] = dataset.tile_resolution_zyx
-    iz, iy, ix = input_resolution_zyx
-    scale_input_zyx = Affine(np.array([[iz, 0, 0, 0], 
-                                       [0, iy, 0, 0], 
-                                       [0, 0, ix, 0]]))
-
-    output_resolution_zyx: tuple[float, float, float] = output_params.resolution_zyx
-    oz, oy, ox = output_resolution_zyx
-    sample_output_zyx = Affine(np.array([[1/oz, 0, 0, 0], 
-                                         [0, 1/oy, 0, 0], 
-                                         [0, 0, 1/ox, 0]]))
-    for tile_id, tfm_list in tile_transforms.items():
-        tile_transforms[tile_id] = [*tfm_list, 
-                                    scale_input_zyx,
-                                    *post_reg_tfms,
-                                    sample_output_zyx]
-
-    tile_sizes_zyx: dict[int, tuple[int, int, int]] = {}
-    tile_aabbs: dict[int, AABB] = {}
-    tile_boundary_point_cloud_zyx = [] 
-    
-    for tile_id, tile_arr in tile_arrays.items():
-        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape
-        tile_boundaries = torch.Tensor([[0., 0., 0.], 
-                        [zyx[0], 0., 0.],
-                        [0., zyx[1], 0.],
-                        [0., 0., zyx[2]],
-                        [zyx[0], zyx[1], 0.],
-                        [zyx[0], 0., zyx[2]],
-                        [0., zyx[1], zyx[2]],
-                        [zyx[0], zyx[1], zyx[2]]])  
-        
-        tfm_list = tile_transforms[tile_id]
-        for i, tfm in enumerate(tfm_list): 
-            tile_boundaries = tfm.forward(tile_boundaries, device=torch.device('cpu'))
-
-        tile_aabbs[tile_id] = aabb_3d(tile_boundaries)
-        tile_boundary_point_cloud_zyx.extend(tile_boundaries)
-    tile_boundary_point_cloud_zyx = torch.stack(tile_boundary_point_cloud_zyx, dim=0)
-
-    # Resolve Output Volume Dimensions and Absolute Position
-    global_tile_boundaries = aabb_3d(tile_boundary_point_cloud_zyx)
-    OUTPUT_VOLUME_SIZE = (int(global_tile_boundaries[1] - global_tile_boundaries[0]), 
-                          int(global_tile_boundaries[3] - global_tile_boundaries[2]),
-                          int(global_tile_boundaries[5] - global_tile_boundaries[4]))
-    LOGGER.info(f'{OUTPUT_VOLUME_SIZE=}')
-
-    OUTPUT_VOLUME_ORIGIN = torch.Tensor([
-        torch.min(tile_boundary_point_cloud_zyx[:, 0]).item(),
-        torch.min(tile_boundary_point_cloud_zyx[:, 1]).item(),
-        torch.min(tile_boundary_point_cloud_zyx[:, 2]).item()
-    ])
-    
-    # Shift AABB's into Output Volume where
-    # absolute position of output volume is moved to (0, 0, 0)
-    for tile_id, t_aabb in tile_aabbs.items():
-        updated_aabb = (t_aabb[0] - OUTPUT_VOLUME_ORIGIN[0], t_aabb[1] - OUTPUT_VOLUME_ORIGIN[0],
-                        t_aabb[2] - OUTPUT_VOLUME_ORIGIN[1], t_aabb[3] - OUTPUT_VOLUME_ORIGIN[1], 
-                        t_aabb[4] - OUTPUT_VOLUME_ORIGIN[2], t_aabb[5] - OUTPUT_VOLUME_ORIGIN[2])
-        tile_aabbs[tile_id] = updated_aabb 
-
-    # Initalize Output Volume
-    out_group = zarr.open_group(output_params.path, mode='w')
-    path = "0"
-    chunksize = output_params.chunksize
-    datatype = output_params.dtype
-    dimension_separator = "/"
-    compressor = output_params.compressor    
-    global output_volume
-    output_volume = out_group.create_dataset(
-        path,
-        shape=(1, 1, OUTPUT_VOLUME_SIZE[0], OUTPUT_VOLUME_SIZE[1], OUTPUT_VOLUME_SIZE[2]),
-        chunks=chunksize,
-        dtype=datatype,
-        compressor=compressor,
-        dimension_separator=dimension_separator,
-        overwrite=True,
-        fill_value=0
-    )
-
-    # Run Fusion: Define all work
-    z_cnt, z_cnt, z_cnt = get_cell_count_zyx(OUTPUT_VOLUME_SIZE, cell_size)
-    est_total_cells = z_cnt * z_cnt * z_cnt
-    LOGGER.info(f'Estimated Total Cells: {est_total_cells}')
-
-    process_args: list[dict] = []
-    if len(worker_cells) == 0: 
-        cell_num = 0
-        for z in range(z_cnt):
-            for y in range(y_cnt): 
-                for x in range(x_cnt):
-                    process_args.append({'cell_num': cell_num, 
-                                        'z': z, 
-                                        'y': y, 
-                                        'x': x})
-                    cell_num += 1
-    else: 
-        cell_num = 0
-        for cell_coord in worker_cells:
-            z, y, x = cell_coord 
-            process_args.append({'cell_num': cell_num, 
-                                 'z': z, 
-                                 'y': y, 
-                                 'x': x})
-            cell_num += 1
-
-    # Single threaded execution
-    """
-    for p_args in process_args:
-        color_cell(tile_arrays, 
-                   tile_transforms, 
-                   tile_sizes_zyx, 
-                   tile_aabbs, 
-                   output_volume, 
-                   OUTPUT_VOLUME_ORIGIN,
-                   cell_size, 
-                   blend_module,
-                   p_args['z'], p_args['y'], p_args['x'], devices[0],
-                   LOGGER)
-    """
-
-    # Multithreaded execution
-    
-    # Run Fusion: Fill work queue with inital tasks
-    # Task-specific info includes process_args and device. 
-    if devices[0] == torch.device('cpu'): 
-        pool_size = os.cpu_count() // 3
-        LOGGER.info(f'CPU Runtime: Using {pool_size} CPUs')
-    else: 
-        pool_size = len(devices)
-        LOGGER.info(f'GPU Runtime: Using {pool_size} GPUs')
-    
-
-    start_run = time.time()
-    active_processes: list[tuple] = []   # (process, device, cell_num, start_time)
-    for i in range(pool_size):
-        p_args = process_args.pop(0)
-        p = torch.multiprocessing.Process(target=color_cell,
-                                    args=(tile_arrays, 
-                                          tile_transforms, 
-                                          tile_sizes_zyx, 
-                                          tile_aabbs, 
-                                          output_volume, 
-                                          OUTPUT_VOLUME_ORIGIN,
-                                          cell_size, 
-                                          blend_module,
-                                          p_args['z'], p_args['y'], p_args['x'], devices[i % len(devices)],
-                                          LOGGER))
-        # active_processes.append((devices[i % len(devices)], p))
-        active_processes.append((p, devices[i % len(devices)], p_args["cell_num"], time.time()))
-        LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
-        p.start()
-    
-    # Run Fusion: Exhaust all the tasks 
-    # Tasks all implictly defined in process_args buffer
-    while len(active_processes) != 0: 
-        tmp = []
-        for (p, device, cell_num, start_time) in active_processes:
-            p.join(timeout=0)   # timeout indicates do not wait until the process is explicitly finished
-
-            if p.is_alive():
-                tmp.append((p, device, cell_num, start_time))
-            else:
-                p.close()
-                LOGGER.info(f'Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}')
-
-                if len(process_args) != 0:
-                    p_args = process_args.pop(0)
-                    new_p = torch.multiprocessing.Process(target=color_cell,
-                                        args=(tile_arrays, 
-                                              tile_transforms, 
-                                              tile_sizes_zyx, 
-                                              tile_aabbs, 
-                                              output_volume, 
-                                              OUTPUT_VOLUME_ORIGIN,
-                                              cell_size, 
-                                              blend_module,
-                                              p_args['z'], p_args['y'], p_args['x'], device,
-                                              LOGGER))
-                    tmp.append((new_p, device, p_args["cell_num"], time.time()))
-                    LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
-                    new_p.start()
-
-            active_processes = tmp
-
-    LOGGER.info(f'Runtime: {time.time() - start_run}')

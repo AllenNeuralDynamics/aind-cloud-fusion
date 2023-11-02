@@ -16,12 +16,10 @@ def read_config_yaml(yaml_path: str) -> dict:
         yaml_dict = yaml.safe_load(f)
     return yaml_dict
 
-
 def write_config_yaml(yaml_path: str, 
                       yaml_data: dict) -> None:
     with open(yaml_path, 'w') as file:
         yaml.dump(yaml_data, file, default_flow_style=False)
-
 
 class LazyArray:
     def __getitem__(self, value):
@@ -264,36 +262,6 @@ class BigStitcherDataset(Dataset):
             )
 
         return net_transforms
-
-class TestDataset(Dataset):
-    def __init__(self, tile_1_zyx: np.ndarray, 
-                       tile_2_zyx: np.ndarray, 
-                       known_transform_zyx: geometry.Matrix, 
-                       input_resolution_zyx: tuple[float, float, float]):
-        self.tile_1_zyx = tile_1_zyx
-        self.tile_2_zyx = tile_2_zyx
-        self.known_transform_zyx = known_transform_zyx
-        self.input_resolution_zyx = input_resolution_zyx
-
-    def tile_volumes_zyx(self) -> dict[int, LazyArray]::
-        tile_volumes = {0: self.tile_1_zyx
-                        1: self.tile_2_zyx}
-        return tile_volumes
-
-    def tile_transforms_zyx(self) -> dict[int, geometry.Transform]:
-        tile_transforms = {0: geometry.Affine(np.array([[1, 0, 0, 0], 
-                                                        [0, 1, 0, 0], 
-                                                        [0, 0, 1, 0]])),
-                           1: geometry.Affine(self.known_transform_zyx)}
-        return tile_transforms
-
-    def tile_shapes_zyx(self) -> dict[int, tuple[int, int, int]]:
-        tile_shapes = {0: self.tile_1_zyx.shape
-                       1: self.tile_2_zyx.shape}
-        return tile_shapes
-
-    def tile_resolution_zyx(self) -> tuple[float, float, float]:        
-        return self.input_resolution_zyx
 
 @dataclass
 class OutputParameters:
