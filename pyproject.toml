@@ -22,7 +22,8 @@ dependencies = [
     'nptyping==2.5.0',
     'zarr==2.16.1',
     's3fs==2023.9.2', 
-    'dask==2023.10.0'
+    'dask==2023.10.0',
+    'Pillow==10.1.0'
 ]
 
 [project.optional-dependencies]
