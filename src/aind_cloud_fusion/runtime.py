@@ -24,15 +24,6 @@ def initalize_compute_node(yml_file: str):
 
     return node
 
-
-@dataclass
-class RuntimeParameters: 
-    use_gpus: bool
-    devices: list[torch.device]
-    pool_size: int
-    worker_cells: list[tuple[int, int, int]] = []
-
-
 class ComputeNode: 
     """
     Generic Runtime Primitive. 
@@ -56,11 +47,11 @@ class ComputeNode:
 
         chunk_size = params['output']['chunksize']
         self.CELL_SIZE = params['algorithm_parameters']['cell_size']
-        assert (CELL_SIZE[0] % chunk_size[0] == 0) and \
-            (CELL_SIZE[1] % chunk_size[1] == 0) and \
-            (CELL_SIZE[2] % chunk_size[2] == 0), \
-            f'Cell size {CELL_SIZE} is not a multiple of chunksize {chunk_size}. 
-                Please update configuration file.'
+        assert (self.CELL_SIZE[0] % chunk_size[0] == 0) and \
+            (self.CELL_SIZE[1] % chunk_size[1] == 0) and \
+            (self.CELL_SIZE[2] % chunk_size[2] == 0), \
+            f'''Cell size {self.CELL_SIZE} is not a multiple of chunksize {chunk_size}. 
+                Please update configuration file.'''
 
         self.BLENDING_MODULE = None
         if params['algorithm_parameters']['blending_module'] == 'MaxProjection': 
@@ -76,18 +67,18 @@ class ComputeNode:
         if params['runtime']['use_gpus']:
             DEVICES = [torch.device(f'cuda:{i}') for i in range(torch.cuda.device_count())]
             assert pool_size <= len(DEVICES), \
-                f'For GPU runtime, pool size must be <= number of GPUs. 
-                Pool Size: {pool_size}, Num GPU: {len(DEVICES)}'
+                f'''For GPU runtime, pool size must be <= number of GPUs. 
+                Pool Size: {pool_size}, Num GPU: {len(DEVICES)}'''
             pool_size = params['runtime']['pool_size']
 
         else: 
             DEVICES = [torch.device('cpu')]
             assert pool_size <= os.cpu_count(), \
-                f'For CPU runtime, pool size must be <= number of CPUs.
-                Pool Size: {pool_size}, Num CPU: {os.cpu_count()}'
+                f'''For CPU runtime, pool size must be <= number of CPUs.
+                Pool Size: {pool_size}, Num CPU: {os.cpu_count()}'''
             pool_size = params['runtime']['pool_size']            
 
-        self.RUNTIME_PARAMS = RuntimeParameters(use_gpus=params['runtime']['use_gpus'], 
+        self.RUNTIME_PARAMS = io.RuntimeParameters(use_gpus=params['runtime']['use_gpus'], 
                                                 devices=DEVICES, 
                                                 pool_size=pool_size)
 
@@ -100,9 +91,18 @@ class Scheduler(ComputeNode):
     Defines context for a scheduler run. 
     """
 
-    def __init__(self, config_yaml: str):
+    def __init__(self, config_yaml: str, test_dataset: io.Dataset = None):
+        """
+        test_dataset: Input for mock datasets used in automated testing. 
+        Essentially, this exists because creating a synthetic dataset 
+        with known transformations, etc. in numpy is easier than creating a
+        synthetic dataset with BigStitcher, etc. 
+        """
         super().__init__(config_yaml)
         params = io.read_config_yaml(config_yaml)
+
+        if test_dataset: 
+            self.DATASET = test_dataset
         self.worker_yml_path = params['runtime']['scheduler']['worker_yml_path']
         self.num_workers = params['runtime']['scheduler']['num_workers']
         
@@ -112,7 +112,9 @@ class Scheduler(ComputeNode):
         """
 
         # Get Output Volume Size from fusion
-        _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(self.DATASET, self.OUTPUT_PARAMS)
+        _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(self.DATASET, 
+                                                                     self.POST_REG_TFMS,
+                                                                     self.OUTPUT_PARAMS)
 
         # Define/Divide Work, Generate YAML files.
         z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(output_volume_size, self.CELL_SIZE)
@@ -152,9 +154,17 @@ class Worker(ComputeNode):
     Defines context for worker run. 
     """
 
-    def __init__(self, config_yaml: str):
-        super().__init(config_yaml)
+    def __init__(self, config_yaml: str, test_dataset: io.Dataset = None):
+        """
+        test_dataset: Input for mock datasets used in automated testing. 
+        Essentially, this exists because creating a synthetic dataset 
+        with known transformations, etc. in numpy is easier than creating a
+        synthetic dataset with BigStitcher, etc. 
+        """
+        super().__init__(config_yaml)
         params = io.read_config_yaml(config_yaml)
+        if test_dataset: 
+            self.DATASET = test_dataset
 
         worker_cells = []
         # Distributed Worker
@@ -164,7 +174,9 @@ class Worker(ComputeNode):
         # Solo Worker
         else:
             # Get Output Volume Size from fusion initalization
-            _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(self.DATASET, self.OUTPUT_PARAMS)
+            _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(self.DATASET, 
+                                                                         self.POST_REG_TFMS,
+                                                                         self.OUTPUT_PARAMS)
 
             # Fill worker cells with all work
             z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(output_volume_size, self.CELL_SIZE)
@@ -172,6 +184,7 @@ class Worker(ComputeNode):
                 for y in range(y_cnt):
                     for x in range(x_cnt):
                         worker_cells.append((z, y, x))
+        
         self.RUNTIME_PARAMS.worker_cells = worker_cells
     
     def run(self):
@@ -181,3 +194,10 @@ class Worker(ComputeNode):
                         self.CELL_SIZE, 
                         self.POST_REG_TFMS,
                         self.BLENDING_MODULE)
+
+# Fusion init, called in scheduler and worker, 
+# needs post registration transforms. 
+# POST_REG_TRANSFORMS is initalized in the base class, 
+# you simply need to pass this along for fusion init. 
+
+# Okay, not a big change. 

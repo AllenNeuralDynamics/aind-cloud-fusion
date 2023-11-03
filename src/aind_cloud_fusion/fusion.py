@@ -10,11 +10,11 @@ import time
 import aind_cloud_fusion.io as io
 import aind_cloud_fusion.geometry as geometry
 import aind_cloud_fusion.blend as blend
-import aind_cloud_fusion.runtime as runtime
 
 
 def initialize_fusion(dataset: io.Dataset, 
-                      output_parameters: io.OutputParameters
+                      post_reg_tfms: list[geometry.Transform],
+                      output_params: io.OutputParameters
                       ) -> tuple[dict, dict, dict, dict, tuple, tuple, torch.Tensor]: 
     """
     Creates all core fusion data structures and key algorithm inputs. 
@@ -96,10 +96,10 @@ def initialize_fusion(dataset: io.Dataset,
                         t_aabb[4] - OUTPUT_VOLUME_ORIGIN[2], t_aabb[5] - OUTPUT_VOLUME_ORIGIN[2])
         tile_aabbs[tile_id] = updated_aabb 
 
-    return tile_arrays, tile_transforms, tile_sizes, tile_aabbs, OUTPUT_VOLUME_SIZE, OUTPUT_VOLUME_ORIGIN
+    return tile_arrays, tile_transforms, tile_sizes_zyx, tile_aabbs, OUTPUT_VOLUME_SIZE, OUTPUT_VOLUME_ORIGIN
 
 
-def initalize_output_volume(output_parameters: io.OutputParameters, 
+def initalize_output_volume(output_params: io.OutputParameters, 
                             output_volume_size: tuple[int, int, int]
                             ) -> zarr.core.Array: 
     """
@@ -107,7 +107,7 @@ def initalize_output_volume(output_parameters: io.OutputParameters,
 
     Inputs
     ------
-    output_parameters: OutputParameters application instance.
+    output_params: OutputParameters application instance.
     output_volume_size: output of initalize_data_structures(...)
 
     Returns
@@ -152,7 +152,7 @@ def get_cell_count_zyx(output_volume_size: tuple[int, int, int],
 
 def run_fusion(dataset: io.Dataset,
                output_params: io.OutputParameters,
-               runtime_params: runtime.RuntimeParameters, 
+               runtime_params: io.RuntimeParameters, 
                cell_size: tuple[int, int, int],
                post_reg_tfms: list[geometry.Affine],
                blend_module: blend.BlendingModule):
@@ -161,10 +161,10 @@ def run_fusion(dataset: io.Dataset,
     LOGGER = logging.getLogger(__name__)
     LOGGER.setLevel(logging.INFO)
 
-    a, b, c, d, e, f = initialize_fusion(dataset, output_params)
+    a, b, c, d, e, f = initialize_fusion(dataset, post_reg_tfms, output_params)
     tile_arrays = a   
     tile_transforms = b
-    tile_sizes = c
+    tile_sizes_zyx = c
     tile_aabbs = d
     output_volume_size = e  
     output_volume_origin = f # Temp variables to meet line character maximum. 
@@ -173,7 +173,7 @@ def run_fusion(dataset: io.Dataset,
     LOGGER.info(f'{output_volume_size=}')
 
     # Run Fusion: Define all work
-    z_cnt, z_cnt, z_cnt = get_cell_count_zyx(output_volume_size, cell_size)
+    z_cnt, y_cnt, x_cnt = get_cell_count_zyx(output_volume_size, cell_size)
     est_total_cells = z_cnt * z_cnt * z_cnt
     LOGGER.info(f'Estimated Total Cells: {est_total_cells}')
 

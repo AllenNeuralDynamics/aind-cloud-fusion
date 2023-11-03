@@ -6,7 +6,7 @@ import aind_cloud_fusion.runtime as runtime
 
 
 class TestScheduler(unittest.TestCase):
-    def __init__(self): 
+    def setUp(self):
         config_yaml_path = 'tests/test_scheduler_config.yml'
         self.node = runtime.Scheduler(config_yaml_path, dataset)
         self.node.run()

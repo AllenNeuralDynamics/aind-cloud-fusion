@@ -12,7 +12,7 @@ output:
   # output_resolution: zyx resolution in units of um (or whatever the input resolution unit is). 
   path: "/tmp"
   chunksize: [1, 1, 100, 100, 100]
-  resolution_zyx: [0.75, 0.75, 0.75]
+  resolution_zyx: [1.0, 1.0, 1.0]
 
 algorithm_parameters: 
   # post_registration_transforms_zyx: list of transforms 

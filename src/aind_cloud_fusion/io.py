@@ -5,6 +5,7 @@ from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 import dask.array as da
 import numpy as np
+import torch
 import xmltodict
 import yaml
 
@@ -64,7 +65,7 @@ class Dataset:
         raise Dataset.WriteError("tile_volumes_zyx is read-only.")
 
     @property
-    def tile_transforms_zyx(self) -> dict[int, geometry.Transform]:
+    def tile_transforms_zyx(self) -> dict[int, list[geometry.Transform]]:
         """
         Dict of tile_id -> tile transforms.
         """
@@ -271,3 +272,14 @@ class OutputParameters:
     dtype: np.dtype = np.uint16
     dimension_separator: str = "/"
     compressor: str = None
+
+class RuntimeParameters: 
+    def __init__(self, 
+                use_gpus: bool,
+                devices: list[torch.cuda.device],
+                pool_size: int,
+                worker_cells: list[tuple[int, int, int]] = []):
+        self.use_gpus = use_gpus
+        self.devices = devices
+        self.pool_size = pool_size
+        self.worker_cells = worker_cells
