@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import os
+from pathlib import Path
 
 import aind_cloud_fusion.io as io
 import aind_cloud_fusion.blend as blend
@@ -38,10 +39,10 @@ class ComputeNode:
         self.DATASET = None
         dataset_type = params['input']['dataset_type']
         if dataset_type == 'big_stitcher':
-            xml_path = params['dataset_parameters']['big_stitcher']['xml_path']
+            xml_path = str(Path(params['dataset_parameters']['big_stitcher']['xml_path']))
             self.DATASET = io.BigStitcherDataset(xml_path)
 
-        self.OUTPUT_PARAMS = io.OutputParameters(path=params['output']['path'],
+        self.OUTPUT_PARAMS = io.OutputParameters(path=str(Path(params['output']['path'])),
                                         chunksize=tuple(params['output']['chunksize']), 
                                         resolution_zyx=tuple(params['output']['resolution_zyx']))
 
@@ -89,6 +90,14 @@ class ComputeNode:
 class Scheduler(ComputeNode): 
     """
     Defines context for a scheduler run. 
+    Scheduler Reads: 
+    - Local/Cloud tiles, depending on Dataset definition.
+    - Local Configuruation File containing all 
+    general run configs + scheduler specific params. 
+
+    Scheduler Outputs: 
+    - Local Worker Configuration Files. 
+
     """
 
     def __init__(self, config_yaml: str, test_dataset: io.Dataset = None):
@@ -103,9 +112,13 @@ class Scheduler(ComputeNode):
 
         if test_dataset: 
             self.DATASET = test_dataset
-        self.worker_yml_path = params['runtime']['scheduler']['worker_yml_path']
+        self.config_yaml = config_yaml
+        self.worker_yml_path = str(Path(params['runtime']['scheduler']['worker_yml_path']))
         self.num_workers = params['runtime']['scheduler']['num_workers']
         
+        # Create path if does not exist
+        Path(self.worker_yml_path).mkdir(parents=True, exist_ok=True)
+
     def run(self):
         """
         Outputs worker configuration files into specifed path. 
@@ -122,7 +135,7 @@ class Scheduler(ComputeNode):
         cell_per_worker = total_cells // self.num_workers
 
         # Prep base (copied) yml
-        params = io.read_config_yaml(config_yaml)
+        params = io.read_config_yaml(self.config_yaml)
         del params['runtime']['scheduler']
         params['runtime']['worker'] = {}
         curr_worker_cells = []
@@ -134,24 +147,32 @@ class Scheduler(ComputeNode):
                     if len(curr_worker_cells) == cell_per_worker:
                         # Publish Yaml File, Reset (Worker cell, num) State
                         params['runtime']['worker']['worker_cells'] = curr_worker_cells
-                        io.write_config_yaml(yaml_path=f'worker_config_{worker_num}.yaml',
+                        yaml_path = Path(self.worker_yml_path) / f'worker_config_{worker_num}.yaml'
+                        io.write_config_yaml(yaml_path=yaml_path,
                                              yaml_data=params)
 
                         curr_worker_cells = []
                         params['runtime']['worker'] = {}
                         worker_num += 1
 
-                    curr_worker_cells.append((z, y, x))
+                    curr_worker_cells.append([z, y, x])
         
         # Publish remaining state into last YAML file
         params['runtime']['worker']['worker_cells'] = curr_worker_cells
-        io.write_config_yaml(yaml_path=f'worker_config_{worker_num}.yaml',
-                                yaml_data=params)
-
+        yaml_path = Path(self.worker_yml_path) / f'worker_config_{worker_num}.yaml'
+        io.write_config_yaml(yaml_path=str(yaml_path),
+                             yaml_data=params)
 
 class Worker(ComputeNode):
     """
     Defines context for worker run. 
+    Worker Reads: 
+    - Local/Cloud tiles, depending on Dataset definition.
+    - Scheduler-generated Local Configuruation File containing all 
+    general run configs + worker specific params. 
+
+    Scheduler Outputs: 
+    - Local/Cloud Volume, depending on output path. 
     """
 
     def __init__(self, config_yaml: str, test_dataset: io.Dataset = None):
@@ -169,8 +190,8 @@ class Worker(ComputeNode):
         worker_cells = []
         # Distributed Worker
         if 'worker' in params['runtime']:
-            worker_cells = params['worker']['worker_cells']
-        
+            worker_cells = [tuple(cell) for cell in params['worker']['worker_cells']] 
+
         # Solo Worker
         else:
             # Get Output Volume Size from fusion initalization
@@ -194,10 +215,3 @@ class Worker(ComputeNode):
                         self.CELL_SIZE, 
                         self.POST_REG_TFMS,
                         self.BLENDING_MODULE)
-
-# Fusion init, called in scheduler and worker, 
-# needs post registration transforms. 
-# POST_REG_TRANSFORMS is initalized in the base class, 
-# you simply need to pass this along for fusion init. 
-
-# Okay, not a big change. 

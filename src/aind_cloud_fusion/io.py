@@ -20,7 +20,7 @@ def read_config_yaml(yaml_path: str) -> dict:
 def write_config_yaml(yaml_path: str, 
                       yaml_data: dict) -> None:
     with open(yaml_path, 'w') as file:
-        yaml.dump(yaml_data, file, default_flow_style=False)
+        yaml.dump(yaml_data, file)
 
 class LazyArray:
     def __getitem__(self, value):
