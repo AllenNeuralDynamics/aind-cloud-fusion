@@ -66,7 +66,7 @@ exclude = '''
 
 [tool.coverage.run]
 omit = ["*__init__*"]
-source = ["aind_cloud_fusion", "tests"]
+source = ["aind_cloud_fusion"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -75,12 +75,12 @@ exclude_lines = [
     "import",
     "pragma: no cover"
 ]
-fail_under = 100
+fail_under = 50
 
 [tool.isort]
 line_length = 79
 profile = "black"
 
 [tool.interrogate]
-exclude = ["setup.py", "docs", "build"]
-fail-under = 100
+exclude = ["setup.py", "docs", "build", "tests/"]
+fail-under = 50

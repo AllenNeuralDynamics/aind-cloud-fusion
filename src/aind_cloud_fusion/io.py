@@ -1,8 +1,9 @@
 """
 Defines all standard input to fusion algorithm.
 """
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 from dataclasses import dataclass
+
 import dask.array as da
 import numpy as np
 import torch
@@ -13,14 +14,15 @@ import aind_cloud_fusion.geometry as geometry
 
 
 def read_config_yaml(yaml_path: str) -> dict:
-    with open(yaml_path, 'r') as f:
+    with open(yaml_path, "r") as f:
         yaml_dict = yaml.safe_load(f)
     return yaml_dict
 
-def write_config_yaml(yaml_path: str, 
-                      yaml_data: dict) -> None:
-    with open(yaml_path, 'w') as file:
+
+def write_config_yaml(yaml_path: str, yaml_data: dict) -> None:
+    with open(yaml_path, "w") as file:
         yaml.dump(yaml_data, file)
+
 
 class LazyArray:
     def __getitem__(self, value):
@@ -36,20 +38,22 @@ class LazyArray:
 
 
 class ZarrArray(LazyArray):
-    def __init__(self, arr: da.Array): 
+    def __init__(self, arr: da.Array):
         self.arr = arr
 
     def __getitem__(self, slice):
         return self.arr[slice].compute()
-    
+
     @property
     def shape(self):
         return self.arr.shape
 
+
 class Dataset:
     """
-    Data and transforms are 3d zyx objects. 
+    Data and transforms are 3d zyx objects.
     """
+
     class WriteError(Exception):
         pass
 
@@ -61,7 +65,7 @@ class Dataset:
         raise NotImplementedError("Please implement in Dataset subclass.")
 
     @tile_volumes_zyx.setter
-    def tile_volumes_zyx(self, value): 
+    def tile_volumes_zyx(self, value):
         raise Dataset.WriteError("tile_volumes_zyx is read-only.")
 
     @property
@@ -72,7 +76,7 @@ class Dataset:
         raise NotImplementedError("Please implement in Dataset subclass.")
 
     @tile_transforms_zyx.setter
-    def tile_transforms_zyx(self, value): 
+    def tile_transforms_zyx(self, value):
         raise Dataset.WriteError("tile_transforms_zyx is read-only.")
 
     @property
@@ -89,8 +93,8 @@ class Dataset:
     @property
     def tile_resolution_zyx(self) -> tuple[float, float, float]:
         """
-        Specifies absolute size of each voxel in tile volume. 
-        Tile resolution is used to scale tile volume into absolute space prior to registration. 
+        Specifies absolute size of each voxel in tile volume.
+        Tile resolution is used to scale tile volume into absolute space prior to registration.
         """
         raise NotImplementedError("Please implement in Dataset subclass.")
 
@@ -99,15 +103,15 @@ class Dataset:
         raise Dataset.WriteError("tile_resolution_zyx is read-only.")
 
 
-class BigStitcherDataset(Dataset): 
-    def __init__(self, xml_path: str): 
+class BigStitcherDataset(Dataset):
+    def __init__(self, xml_path: str):
         self.xml_path = xml_path
 
     @property
     def tile_volumes_zyx(self) -> dict[int, LazyArray]:
         tile_paths = self._extract_tile_paths(self.xml_path)
-        for t_id, t_path in tile_paths.items(): 
-            tile_paths[t_id] = tile_paths[t_id] + '/0'
+        for t_id, t_path in tile_paths.items():
+            tile_paths[t_id] = tile_paths[t_id] + "/0"
 
         tile_arrays: dict[int, LazyArray] = {}
         for tile_id, t_path in tile_paths.items():
@@ -121,15 +125,15 @@ class BigStitcherDataset(Dataset):
     def tile_transforms_zyx(self) -> dict[int, list[geometry.Transform]]:
         tile_tfms = self._extract_tile_transforms(self.xml_path)
         tile_net_tfms = self._calculate_net_transforms(tile_tfms)
-        
+
         for tile_id, tfm in tile_net_tfms.items():
             # BigStitcher XYZ -> ZYX
-            # Given Matrix 3x4: 
+            # Given Matrix 3x4:
             # Swap Rows 0 and 2; Swap Colums 0 and 2
             tmp = np.copy(tfm)
             tmp[[0, 2], :] = tmp[[2, 0], :]
             tmp[:, [0, 2]] = tmp[:, [2, 0]]
-            tfm = tmp        
+            tfm = tmp
 
             # Pack into list
             tile_net_tfms[tile_id] = [geometry.Affine(tfm)]
@@ -141,7 +145,9 @@ class BigStitcherDataset(Dataset):
         with open(self.xml_path, "r") as file:
             data: OrderedDict = xmltodict.parse(file.read())
 
-        resolution_str = data["SpimData"]["SequenceDescription"]["ViewSetups"]["ViewSetup"][0]['voxelSize']['size']
+        resolution_str = data["SpimData"]["SequenceDescription"]["ViewSetups"][
+            "ViewSetup"
+        ][0]["voxelSize"]["size"]
         resolution_xyz = [float(num) for num in resolution_str.split(" ")]
         return tuple(resolution_xyz[::-1])
 
@@ -156,7 +162,7 @@ class BigStitcherDataset(Dataset):
             Path of xml outputted from BigStitcher.
 
         Returns
-        ------------------------ 
+        ------------------------
         dict[int, str]:
             Dictionary of tile ids to tile paths.
         """
@@ -164,16 +170,20 @@ class BigStitcherDataset(Dataset):
         with open(xml_path, "r") as file:
             data: OrderedDict = xmltodict.parse(file.read())
 
-        parent = data["SpimData"]["SequenceDescription"]["ImageLoader"]["zarr"]['#text']
+        parent = data["SpimData"]["SequenceDescription"]["ImageLoader"][
+            "zarr"
+        ]["#text"]
 
         for i, zgroup in enumerate(
-            data["SpimData"]["SequenceDescription"]["ImageLoader"]["zgroups"]["zgroup"]
+            data["SpimData"]["SequenceDescription"]["ImageLoader"]["zgroups"][
+                "zgroup"
+            ]
         ):
-            view_paths[i] = parent + '/' + zgroup["path"]
+            view_paths[i] = parent + "/" + zgroup["path"]
 
         return view_paths
 
-    def _extract_tile_transforms(self, xml_path: str) -> dict[int, list[dict]]: 
+    def _extract_tile_transforms(self, xml_path: str) -> dict[int, list[dict]]:
         """
         Utility called in property.
         Parses BDV xml and outputs map of setup_id -> list of transformations
@@ -197,7 +207,9 @@ class BigStitcherDataset(Dataset):
         with open(xml_path, "r") as file:
             data: OrderedDict = xmltodict.parse(file.read())
 
-        for view_reg in data["SpimData"]["ViewRegistrations"]["ViewRegistration"]:
+        for view_reg in data["SpimData"]["ViewRegistrations"][
+            "ViewRegistration"
+        ]:
             tfm_stack = view_reg["ViewTransform"]
             if type(tfm_stack) is not list:
                 tfm_stack = [tfm_stack]
@@ -209,10 +221,11 @@ class BigStitcherDataset(Dataset):
 
         return view_transforms
 
-    def _calculate_net_transforms(self, view_transforms: dict[int, list[dict]]
-                                  ) -> dict[int, geometry.Matrix]:
+    def _calculate_net_transforms(
+        self, view_transforms: dict[int, list[dict]]
+    ) -> dict[int, geometry.Matrix]:
         """
-        Utility called in property. 
+        Utility called in property.
         Accumulate net transform and net translation for each matrix stack.
         Net translation =
             Sum of translation vectors converted into original nominal basis
@@ -232,12 +245,12 @@ class BigStitcherDataset(Dataset):
         dict[int, np.ndarray]:
             Dictionary of tile ids to net_transform.
         """
-        
+
         identity_transform = np.array(
-        [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+            [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
         )
         net_transforms: dict[int, np.ndarray] = {}
-        for tile_id in view_transforms: 
+        for tile_id in view_transforms:
             net_transforms[tile_id] = np.copy(identity_transform)
 
         for view, tfs in view_transforms.items():
@@ -254,15 +267,20 @@ class BigStitcherDataset(Dataset):
                 matrix_3x3 = np.array([nums[0::4], nums[1::4], nums[2::4]])
                 translation = np.array(nums[3::4])
 
-                net_translation = net_translation + (curr_inverse @ translation)
+                net_translation = net_translation + (
+                    curr_inverse @ translation
+                )
                 net_matrix_3x3 = matrix_3x3 @ net_matrix_3x3
-                curr_inverse = np.linalg.inv(net_matrix_3x3)  # Update curr_inverse
+                curr_inverse = np.linalg.inv(
+                    net_matrix_3x3
+                )  # Update curr_inverse
 
             net_transforms[view] = np.hstack(
                 (net_matrix_3x3, net_translation.reshape(3, 1))
             )
 
         return net_transforms
+
 
 @dataclass
 class OutputParameters:
@@ -273,12 +291,15 @@ class OutputParameters:
     dimension_separator: str = "/"
     compressor: str = None
 
-class RuntimeParameters: 
-    def __init__(self, 
-                use_gpus: bool,
-                devices: list[torch.cuda.device],
-                pool_size: int,
-                worker_cells: list[tuple[int, int, int]] = []):
+
+class RuntimeParameters:
+    def __init__(
+        self,
+        use_gpus: bool,
+        devices: list[torch.cuda.device],
+        pool_size: int,
+        worker_cells: list[tuple[int, int, int]] = [],
+    ):
         self.use_gpus = use_gpus
         self.devices = devices
         self.pool_size = pool_size
