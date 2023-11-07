@@ -19,7 +19,7 @@ Transform types compose and can be used in sequence with one another.
 ## Installation:
 1) Run
 ```
-pip install aind-cloud-fusion
+git clone https://github.com/AllenNeuralDynamics/aind-cloud-fusion.git
 ```
 
 2) Please visit the PyTorch website and install the version of PyTorch compatible with your local OS and GPU hardware. All other dependencies are installed within package. 
