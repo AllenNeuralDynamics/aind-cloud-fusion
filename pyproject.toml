@@ -24,9 +24,9 @@ dependencies = [
     's3fs==2023.9.2', 
     'dask==2023.10.0',
     'Pillow==10.1.0',
-    'torch-2.1.0+cpu', 
-    'torchaudio-2.1.0+cpu', 
-    'torchvision-0.16.0+cpu'
+    'torch==2.1.0+cpu', 
+    'torchaudio==2.1.0+cpu', 
+    'torchvision==0.16.0+cpu'
 ]
 
 [project.optional-dependencies]
