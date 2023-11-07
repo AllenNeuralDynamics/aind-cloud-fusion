@@ -18,12 +18,15 @@ dynamic = ["version"]
 
 dependencies = [
     'xmltodict==0.13.0',
-    'numpy==1.26.1',
+    'numpy',
     'nptyping==2.5.0',
     'zarr==2.16.1',
     's3fs==2023.9.2', 
     'dask==2023.10.0',
-    'Pillow==10.1.0'
+    'Pillow==10.1.0',
+    'torch-2.1.0+cpu', 
+    'torchaudio-2.1.0+cpu', 
+    'torchvision-0.16.0+cpu'
 ]
 
 [project.optional-dependencies]

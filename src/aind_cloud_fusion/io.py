@@ -221,6 +221,8 @@ class BigStitcherDataset(Dataset):
 
         return view_transforms
 
+    # NOTE: 
+    # If fusion is ever suspicious, rewrite this utility as simply a list of forward transforms. 
     def _calculate_net_transforms(
         self, view_transforms: dict[int, list[dict]]
     ) -> dict[int, geometry.Matrix]:
