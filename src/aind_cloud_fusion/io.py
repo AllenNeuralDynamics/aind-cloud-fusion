@@ -281,6 +281,15 @@ class BigStitcherDataset(Dataset):
 
         return net_transforms
 
+# New class here. 
+class BigStitcherDatasetChannel(BigStitcherDataset):
+    def __init__(self):
+        pass
+
+    @property
+    def tile_volumes_zyx(self) -> dict[int, LazyArray]:
+        pass
+
 
 @dataclass
 class OutputParameters:
