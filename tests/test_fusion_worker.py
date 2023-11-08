@@ -8,7 +8,7 @@ import zarr
 
 import aind_cloud_fusion.io as io
 import aind_cloud_fusion.runtime as runtime
-from tests.test_dataset import (
+from test_dataset import (
     generate_x_dataset,
     generate_y_dataset,
     generate_z_dataset,

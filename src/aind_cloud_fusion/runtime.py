@@ -48,8 +48,13 @@ class ComputeNode:
             )
             self.DATASET = io.BigStitcherDataset(xml_path)
 
+        output_path = ""
+        if params["output"]["path"].startswith('s3'):
+            output_path = params["output"]["path"]
+        else: 
+            output_path = str(Path(params["output"]["path"]))
         self.OUTPUT_PARAMS = io.OutputParameters(
-            path=str(Path(params["output"]["path"])),
+            path=output_path,
             chunksize=tuple(params["output"]["chunksize"]),
             resolution_zyx=tuple(params["output"]["resolution_zyx"]),
         )

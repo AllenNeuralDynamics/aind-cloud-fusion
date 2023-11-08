@@ -13,9 +13,5 @@ def main(config_yaml: str):
     # NOTE:
     # Multiscaling, which is CPU-bound, can be standalone capsule to save on GPU costs.
 
-
-if __name__ == "__main__":
-    # import wandb
-    # wandb.init(project='pytorch-fusion')
-    torch.cuda.empty_cache()
-    main()
+    # NOTE: 
+    # Use with torch.multiprocessing.set_start_method('forkserver', force=True)

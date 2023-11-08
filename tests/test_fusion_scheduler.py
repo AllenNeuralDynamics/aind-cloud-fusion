@@ -5,7 +5,7 @@ from pathlib import Path
 
 import aind_cloud_fusion.io as io
 import aind_cloud_fusion.runtime as runtime
-from tests.test_dataset import generate_z_dataset
+from test_dataset import generate_z_dataset
 
 
 class TestScheduler(unittest.TestCase):

@@ -289,6 +289,7 @@ def run_fusion(
                 tmp.append((p, device, cell_num, start_time))
             else:
                 p.close()
+                del p 
                 LOGGER.info(
                     f"Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}"
                 )
