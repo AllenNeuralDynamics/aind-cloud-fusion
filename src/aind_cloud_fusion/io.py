@@ -4,8 +4,10 @@ Defines all standard input to fusion algorithm.
 from collections import OrderedDict
 from dataclasses import dataclass
 
+import boto3
 import dask.array as da
 import numpy as np
+import re
 import torch
 import xmltodict
 import yaml
@@ -104,15 +106,18 @@ class Dataset:
 
 
 class BigStitcherDataset(Dataset):
-    def __init__(self, xml_path: str):
+    def __init__(self, xml_path: str, s3_path: str):
         self.xml_path = xml_path
+        self.s3_path = s3_path
 
     @property
     def tile_volumes_zyx(self) -> dict[int, LazyArray]:
         tile_paths = self._extract_tile_paths(self.xml_path)
-        for t_id, t_path in tile_paths.items():
-            tile_paths[t_id] = tile_paths[t_id] + "/0"
-
+        for t_id, t_path in tile_paths.items(): 
+            if not self.s3_path.endswith('/'):
+                self.s3_path = self.s3_path + '/'
+            tile_paths[t_id] = self.s3_path + Path(t_path).name + '/0'
+            
         tile_arrays: dict[int, LazyArray] = {}
         for tile_id, t_path in tile_paths.items():
             tile_zarr = da.from_zarr(t_path)
@@ -281,14 +286,76 @@ class BigStitcherDataset(Dataset):
 
         return net_transforms
 
-# New class here. 
+
 class BigStitcherDatasetChannel(BigStitcherDataset):
-    def __init__(self):
-        pass
+    """
+    Convenience Dataset class that reuses tile registrations, 
+    tile shapes, and tile resolution across channels. 
+    Tile volumes is overloaded with channel-specific data. 
+    """
+    
+    def __init__(self, xml_path: str, channel_num: int):
+        """
+        Only new information required is channel number.
+        """
+        super().__init__(xml_path)
+        self.channel_num = channel_num
 
     @property
     def tile_volumes_zyx(self) -> dict[int, LazyArray]:
-        pass
+        """
+        Load in channel-specific tiles.
+        """
+        tile_arrays: dict[int, LazyArray] = {}
+
+        with open(self.xml_path, "r") as file:
+            data: OrderedDict = xmltodict.parse(file.read())
+
+        # Reference path: s3://aind-open-data/HCR_677594_2023-10-20_15-10-36/SPIM.ome.zarr/
+        slash_2 = self.s3_path.find('/', self.s3_path.find('/') + 1)
+        slash_3 = self.s3_path.find('/', self.s3_path.find('/', self.s3_path.find('/') + 1) + 1)
+        bucket_name = self.s3_path[slash_2:slash_3] 
+        directory_path = self.s3_path[slash_3 + 1:]
+
+        pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
+        for p in self._list_bucket_directory():
+            # Validation
+            if not p.endswith('.zgroup'):       
+                result = re.match(pattern, p)
+                assert result, \
+                    f"""Data directory does not follow file convention:
+                    <tile_name, no underscores>_X_####_Y_####_Z_####_ch_###.zarr
+                    """
+            
+            # Data loading
+            match = None
+            channel_num = 0
+            pattern = r'(\d{3})\.zarr$'
+            match = re.search(pattern, p)
+            if match: 
+                channel_num = int(match.group(1))
+            if  channel_num == self.channel_num:
+                full_resolution_p = p + "/0"
+                tile_zarr = da.from_zarr(full_resolution_p)
+                tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
+                tile_arrays[tile_id] = ZarrArray(tile_zarr_zyx)
+
+        return tile_arrays
+    
+    def _list_bucket_directory(self, bucket_name: str, directory_path: str):
+        # Create an S3 client
+        s3_client = boto3.client('s3')
+
+        # List objects in the specified S3 bucket and directory
+        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=directory_path)
+
+        # Output list of files
+        files = []
+        for obj in response.get('Contents', []):
+            file_key = obj['Key']
+            files.append(file_key)
+
+        return files
 
 
 @dataclass

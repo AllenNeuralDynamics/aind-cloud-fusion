@@ -3,7 +3,9 @@ import os
 from pathlib import Path
 
 import numpy as np
+import time
 import torch
+import uuid
 
 import aind_cloud_fusion.blend as blend
 import aind_cloud_fusion.fusion as fusion
@@ -46,7 +48,9 @@ class ComputeNode:
             xml_path = str(
                 Path(params["dataset_parameters"]["big_stitcher"]["xml_path"])
             )
-            self.DATASET = io.BigStitcherDataset(xml_path)
+            s3_path = params["dataset_parameters"]["big_stitcher"]["s3_path"]
+
+            self.DATASET = io.BigStitcherDataset(xml_path, s3_path)
 
         output_path = ""
         if params["output"]["path"].startswith('s3'):
@@ -230,11 +234,16 @@ class Worker(ComputeNode):
         if test_dataset:
             self.DATASET = test_dataset
 
+        assert 'worker' in params['runtime'], \
+            f'Worker yaml must contain worker parameters.'
+        assert 'log_path' in params['runtime']['worker'], \
+            f'Worker yaml must contain a log_path.'
+
         worker_cells = []
         # Distributed Worker
-        if "worker" in params["runtime"]:
+        if "worker_cells" in params['runtime']['worker']:
             worker_cells = [
-                tuple(cell) for cell in params["worker"]["worker_cells"]
+                tuple(cell) for cell in params['runtime']["worker"]["worker_cells"]
             ]
 
         # Solo Worker
@@ -253,6 +262,7 @@ class Worker(ComputeNode):
                     for x in range(x_cnt):
                         worker_cells.append((z, y, x))
 
+        self.log_path = params['runtime']['worker']['log_path']
         self.RUNTIME_PARAMS.worker_cells = worker_cells
 
     def run(self):
@@ -264,3 +274,16 @@ class Worker(ComputeNode):
             self.POST_REG_TFMS,
             self.BLENDING_MODULE,
         )
+
+        # Unique log filename
+        unique_id = str(uuid.uuid4())
+        timestamp = int(time.time() * 1000)
+        unique_file_name = str(Path(self.log_path) / f"file_{timestamp}_{unique_id}.txt")
+
+        log_content = \
+        f"""Run complete, wrote cells:
+        {self.RUNTIME_PARAMS.worker_cells}
+        """
+        
+        with open(unique_file_name, 'w') as file:
+            file.write(log_content)

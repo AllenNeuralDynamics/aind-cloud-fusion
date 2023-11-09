@@ -13,8 +13,11 @@ runtime:
 
   # worker_cells: list of zyx coordinates of cells to run on this instance.
   # in which cell size is defined in 'algorithm_parameters'.
+  # log_path: local path to write log file to. 
+  #           Log file is given a unique name and written to specified directory. 
   worker:
-    worker_cells: []
+    worker_cells: [...]
+    log_path: "<YOUR PATH HERE>"
 
 input: 
   # dataset_type: {big_stitcher, tiff_directory}
@@ -46,4 +49,7 @@ algorithm_parameters:
 
 dataset_parameters: 
   big_stitcher: 
-    xml_path: "/root/capsule/data/Christian-ME-New-Lasers_stitch_output/bigstitcher_Christian-ME-New-Lasers.xml"
+    # xml_path: local path to find solution xml
+    # s3_path: cloud path to dataset tiles
+    xml_path: "<YOUR PATH HERE>"
+    s3_path: "s3://<YOUR PATH HERE>"

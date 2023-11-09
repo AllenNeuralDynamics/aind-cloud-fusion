@@ -3,6 +3,9 @@ runtime:
   use_gpus: False
   pool_size: 16
 
+  worker:
+    log_path: './tmp/'
+
 input: 
   dataset_type: "TestDataset"
 
