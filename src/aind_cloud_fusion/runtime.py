@@ -177,6 +177,8 @@ class Scheduler(ComputeNode):
         params = io.read_config_yaml(self.config_yaml)
         del params["runtime"]["scheduler"]
         params["runtime"]["worker"] = {}
+        params["runtime"]["worker"]["log_path"] = '/results'
+
         curr_worker_cells = []
         worker_num = 0
 
@@ -198,6 +200,7 @@ class Scheduler(ComputeNode):
 
                         curr_worker_cells = []
                         params["runtime"]["worker"] = {}
+                        params["runtime"]["worker"]["log_path"] = '/results'
                         worker_num += 1
 
                     curr_worker_cells.append([z, y, x])
