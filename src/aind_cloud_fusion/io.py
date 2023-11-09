@@ -3,6 +3,7 @@ Defines all standard input to fusion algorithm.
 """
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 
 import boto3
 import dask.array as da
@@ -294,11 +295,11 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
     Tile volumes is overloaded with channel-specific data. 
     """
     
-    def __init__(self, xml_path: str, channel_num: int):
+    def __init__(self, xml_path: str, s3_path: str, channel_num: int):
         """
         Only new information required is channel number.
         """
-        super().__init__(xml_path)
+        super().__init__(xml_path, s3_path)
         self.channel_num = channel_num
 
     @property

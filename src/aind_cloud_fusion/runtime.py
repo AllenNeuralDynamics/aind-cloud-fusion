@@ -44,13 +44,20 @@ class ComputeNode:
 
         self.DATASET = None
         dataset_type = params["input"]["dataset_type"]
-        if dataset_type == "big_stitcher":
+        if dataset_type == "BigStitcherDataset":
             xml_path = str(
-                Path(params["dataset_parameters"]["big_stitcher"]["xml_path"])
+                Path(params["dataset_parameters"]["BigStitcherDataset"]["xml_path"])
             )
-            s3_path = params["dataset_parameters"]["big_stitcher"]["s3_path"]
+            s3_path = params["dataset_parameters"]["BigStitcherDataset"]["s3_path"]
 
             self.DATASET = io.BigStitcherDataset(xml_path, s3_path)
+        elif dataset_type == 'BigStitcherDatasetChannel':
+            xml_path = str(
+                Path(params["dataset_parameters"]["BigStitcherDatasetChannel"]["xml_path"])
+            )
+            s3_path = params["dataset_parameters"]["BigStitcherDatasetChannel"]["s3_path"]
+            channel_num = int(params["dataset_parameters"]["BigStitcherDatasetChannel"]["channel_num"])
+            self.DATASET = io.BigStitcherDatasetChannel(xml_path, s3_path, channel_num)
 
         output_path = ""
         if params["output"]["path"].startswith('s3'):

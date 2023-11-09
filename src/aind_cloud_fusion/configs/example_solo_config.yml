@@ -17,7 +17,7 @@ runtime:
 input: 
   # dataset_type: {big_stitcher, tiff_directory}
   # See bottom of config file for additional parameters.
-  dataset_type: "big_stitcher"
+  dataset_type: "BigStitcherDataset"
 
 
 output: 
@@ -44,7 +44,7 @@ algorithm_parameters:
 
 
 dataset_parameters: 
-  big_stitcher: 
+  BigStitcherDataset: 
     # xml_path: local path to find solution xml
     # s3_path: cloud path to dataset tiles
     xml_path: "<YOUR PATH HERE>"
