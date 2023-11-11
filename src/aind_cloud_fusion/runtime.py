@@ -288,12 +288,11 @@ class Worker(ComputeNode):
         # Unique log filename
         unique_id = str(uuid.uuid4())
         timestamp = int(time.time() * 1000)
-        unique_file_name = str(Path(self.log_path) / f"file_{timestamp}_{unique_id}.txt")
+        unique_file_name = str(Path(self.log_path) / f"file_{timestamp}_{unique_id}.yaml")
 
-        log_content = \
-        f"""Run complete, wrote cells:
-        {self.RUNTIME_PARAMS.worker_cells}
-        """
-        
-        with open(unique_file_name, 'w') as file:
-            file.write(log_content)
+        log_content = {}
+        log_content['output_path'] = self.OUTPUT_PARAMS.path
+        log_content['resolution_zyx'] = list(self.OUTPUT_PARAMS.resolution_zyx)
+
+        with open(unique_file_name, "w") as file:
+            yaml.dump(log_content, file)
