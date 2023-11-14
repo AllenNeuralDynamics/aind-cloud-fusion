@@ -121,7 +121,7 @@ class BigStitcherDataset(Dataset):
             
         tile_arrays: dict[int, LazyArray] = {}
         for tile_id, t_path in tile_paths.items():            
-            # print(f'Loading Tile {tile_id} / {len(tile_paths)}')
+            print(f'Loading Tile {tile_id} / {len(tile_paths)}')
 
             tile_zarr = da.from_zarr(t_path)
             tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
@@ -358,7 +358,9 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                 location = (int(s_parts[2]), 
                             int(s_parts[4]), 
                             int(s_parts[6]))
-                tile_id = tile_id_lut[location]
+                tile_id = tile_id_lut[location][location]
+
+                print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
                 tile_arrays[tile_id] = ZarrArray(tile_zarr_zyx)
 
         return tile_arrays

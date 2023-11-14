@@ -6,6 +6,7 @@ import numpy as np
 import time
 import torch
 import uuid
+import yaml
 
 import aind_cloud_fusion.blend as blend
 import aind_cloud_fusion.fusion as fusion
@@ -197,7 +198,9 @@ class Scheduler(ComputeNode):
         # 6 workers
         # ceil(50 / 6) -> 9
         n = int(np.ceil(len(cell_coords) / self.num_workers))
+        print(f'Each worker assigned {n} cells')
         for i in range(self.num_workers):
+            print(f'Generating Worker {i} Yaml')
             start = i * n 
             end = (i + 1) * n
             worker_cells = cell_coords[start:end, :].tolist()

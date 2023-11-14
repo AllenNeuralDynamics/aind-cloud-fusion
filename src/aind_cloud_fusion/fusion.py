@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 import torch
+import s3fs
 import zarr
 
 import aind_cloud_fusion.blend as blend
@@ -148,7 +149,17 @@ def initalize_output_volume(
     Zarr thread-safe datastore initialized on OutputParameters.
     """
 
-    out_group = zarr.open_group(output_params.path, mode="w")
+    s3 = s3fs.S3FileSystem(
+        config_kwargs={
+            'max_pool_connections': 50
+        }
+    )
+    store = s3fs.S3Map(root=output_params.path, s3=s3)
+    out_group = zarr.group(store=store, overwrite=True)
+
+    # Results in max-pool connection errors
+    # out_group = zarr.open_group(output_params.path, mode="w")
+
     path = "0"
     chunksize = output_params.chunksize
     datatype = output_params.dtype
