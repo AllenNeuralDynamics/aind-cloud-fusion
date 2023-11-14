@@ -168,56 +168,50 @@ class Scheduler(ComputeNode):
         Outputs worker configuration files into specifed path.
         """
 
-        # Get Output Volume Size from fusion
-        _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(
-            self.DATASET, self.POST_REG_TFMS, self.OUTPUT_PARAMS
-        )
-
-        # Define/Divide Work, Generate YAML files.
-        z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
-            output_volume_size, self.CELL_SIZE
-        )
-        total_cells = z_cnt * y_cnt * x_cnt
-        cell_per_worker = total_cells // self.num_workers
-
         # Prep base (copied) yml
         params = io.read_config_yaml(self.config_yaml)
         del params["runtime"]["scheduler"]
         params["runtime"]["worker"] = {}
         params["runtime"]["worker"]["log_path"] = '/results'
-
-        curr_worker_cells = []
-        worker_num = 0
-
-        for z in range(z_cnt):
-            for y in range(y_cnt):
-                for x in range(x_cnt):
-                    if len(curr_worker_cells) == cell_per_worker:
-                        # Publish Yaml File, Reset (Worker cell, num) State
-                        params["runtime"]["worker"][
-                            "worker_cells"
-                        ] = curr_worker_cells
-                        yaml_path = (
-                            Path(self.worker_yml_path)
-                            / f"worker_config_{worker_num}.yaml"
-                        )
-                        io.write_config_yaml(
-                            yaml_path=yaml_path, yaml_data=params
-                        )
-
-                        curr_worker_cells = []
-                        params["runtime"]["worker"] = {}
-                        params["runtime"]["worker"]["log_path"] = '/results'
-                        worker_num += 1
-
-                    curr_worker_cells.append([z, y, x])
-
-        # Publish remaining state into last YAML file
-        params["runtime"]["worker"]["worker_cells"] = curr_worker_cells
-        yaml_path = (
-            Path(self.worker_yml_path) / f"worker_config_{worker_num}.yaml"
+         
+        # Get Output Volume Size from fusion
+        _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(
+            self.DATASET, self.POST_REG_TFMS, self.OUTPUT_PARAMS
         )
-        io.write_config_yaml(yaml_path=str(yaml_path), yaml_data=params)
+
+        # Define/Divide Work, Export into yamls.
+        z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
+            output_volume_size, self.CELL_SIZE
+        )
+        zs = np.arange(0, z_cnt, 1)
+        ys = np.arange(0, y_cnt, 1)
+        xs = np.arange(0, x_cnt, 1)
+        x, y, z = np.meshgrid(xs, ys, zs)
+        x_flat = x.flatten()
+        y_flat = y.flatten()
+        z_flat = z.flatten()
+        cell_coords = np.column_stack((z_flat, y_flat, x_flat))
+
+        # Ex math: 
+        # 50 cells
+        # 6 workers
+        # ceil(50 / 6) -> 9
+        n = int(np.ceil(len(cell_coords) / self.num_workers))
+        for i in range(self.num_workers):
+            start = i * n 
+            end = (i + 1) * n
+            worker_cells = cell_coords[start:end, :].tolist()
+
+            params["runtime"]["worker"][
+                "worker_cells"
+            ] = worker_cells
+            yaml_path = (
+                Path(self.worker_yml_path)
+                / f"worker_config_{i}.yaml"
+            )
+            io.write_config_yaml(
+                yaml_path=yaml_path, yaml_data=params
+            )
 
 
 class Worker(ComputeNode):

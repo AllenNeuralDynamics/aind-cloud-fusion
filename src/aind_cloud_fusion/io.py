@@ -120,10 +120,12 @@ class BigStitcherDataset(Dataset):
             tile_paths[t_id] = self.s3_path + Path(t_path).name + '/0'
             
         tile_arrays: dict[int, LazyArray] = {}
-        for tile_id, t_path in tile_paths.items():
+        for tile_id, t_path in tile_paths.items():            
+            # print(f'Loading Tile {tile_id} / {len(tile_paths)}')
+
             tile_zarr = da.from_zarr(t_path)
             tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
-            tile_arrays[tile_id] = ZarrArray(tile_zarr_zyx)
+            tile_arrays[int(tile_id)] = ZarrArray(tile_zarr_zyx)
 
         return tile_arrays
 
@@ -142,7 +144,7 @@ class BigStitcherDataset(Dataset):
             tfm = tmp
 
             # Pack into list
-            tile_net_tfms[tile_id] = [geometry.Affine(tfm)]
+            tile_net_tfms[int(tile_id)] = [geometry.Affine(tfm)]
 
         return tile_net_tfms
 
@@ -311,50 +313,74 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
         with open(self.xml_path, "r") as file:
             data: OrderedDict = xmltodict.parse(file.read())
+        tile_id_lut = {}
+        for zgroup in data['SpimData']['SequenceDescription']['ImageLoader']['zgroups']['zgroup']:
+            tile_id = zgroup['@setup']
+            tile_name = zgroup['path']
+            s_parts = tile_name.split('_')
+            location = (int(s_parts[2]), 
+                        int(s_parts[4]), 
+                        int(s_parts[6]))
+            tile_id_lut[location] = int(tile_id)
 
         # Reference path: s3://aind-open-data/HCR_677594_2023-10-20_15-10-36/SPIM.ome.zarr/
         slash_2 = self.s3_path.find('/', self.s3_path.find('/') + 1)
         slash_3 = self.s3_path.find('/', self.s3_path.find('/', self.s3_path.find('/') + 1) + 1)
-        bucket_name = self.s3_path[slash_2:slash_3] 
+        bucket_name = self.s3_path[slash_2 + 1:slash_3]
         directory_path = self.s3_path[slash_3 + 1:]
 
         pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
-        for p in self._list_bucket_directory():
+        for p in self._list_bucket_directory(bucket_name, directory_path):
+            if p.endswith('.zgroup'):
+                continue
+
             # Validation
-            if not p.endswith('.zgroup'):       
-                result = re.match(pattern, p)
-                assert result, \
-                    f"""Data directory does not follow file convention:
-                    <tile_name, no underscores>_X_####_Y_####_Z_####_ch_###.zarr
-                    """
+            # result = re.match(pattern, p)
+            # assert result, \
+            #     f"""Data directory {p} does not follow file convention:
+            #     <tile_name, no underscores>_X_####_Y_####_Z_####_ch_###.zarr
+            #     """
             
             # Data loading
             match = None
             channel_num = 0
             pattern = r'(\d{3})\.zarr$'
-            match = re.search(pattern, p)
+            match = re.search(pattern, p) 
+
             if match: 
                 channel_num = int(match.group(1))
-            if  channel_num == self.channel_num:
-                full_resolution_p = p + "/0"
+            if channel_num == self.channel_num:
+                full_resolution_p = self.s3_path + p + '/0'
                 tile_zarr = da.from_zarr(full_resolution_p)
                 tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
+                
+                s_parts = p.split('_')
+                location = (int(s_parts[2]), 
+                            int(s_parts[4]), 
+                            int(s_parts[6]))
+                tile_id = tile_id_lut[location]
                 tile_arrays[tile_id] = ZarrArray(tile_zarr_zyx)
 
         return tile_arrays
     
     def _list_bucket_directory(self, bucket_name: str, directory_path: str):
-        # Create an S3 client
-        s3_client = boto3.client('s3')
+        client = boto3.client("s3")
+        result = client.list_objects(
+            Bucket=bucket_name, Prefix=directory_path, Delimiter="/"
+        )
 
-        # List objects in the specified S3 bucket and directory
-        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=directory_path)
+        paths = []   # These are paths
+        for o in result.get("CommonPrefixes"):
+            paths.append(o.get("Prefix"))
 
-        # Output list of files
+        # Parse the ending files from the paths
         files = []
-        for obj in response.get('Contents', []):
-            file_key = obj['Key']
-            files.append(file_key)
+        for p in paths: 
+            if p.endswith('/'): 
+                p = p.rstrip("/")  # Remove trailing slash from directories
+            
+            parts = p.split('/')
+            files.append(parts[-1])
 
         return files
 
