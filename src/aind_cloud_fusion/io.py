@@ -358,7 +358,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                 location = (int(s_parts[2]), 
                             int(s_parts[4]), 
                             int(s_parts[6]))
-                tile_id = tile_id_lut[location][location]
+                tile_id = tile_id_lut[location]
 
                 print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
                 tile_arrays[tile_id] = ZarrArray(tile_zarr_zyx)
