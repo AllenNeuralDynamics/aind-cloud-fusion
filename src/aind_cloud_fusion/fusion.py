@@ -233,7 +233,7 @@ def run_fusion(
 
     # Run Fusion: Define all work
     z_cnt, y_cnt, x_cnt = get_cell_count_zyx(output_volume_size, cell_size)
-    est_total_cells = z_cnt * z_cnt * z_cnt
+    est_total_cells = z_cnt * y_cnt * x_cnt
     LOGGER.info(f"Estimated Total Cells: {est_total_cells}")
 
     process_args: list[dict] = []
