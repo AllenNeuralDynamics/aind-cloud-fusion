@@ -23,6 +23,7 @@ DATA CONTRACT:
 Exaspim scheduler outputs a configuration file 
 with the following minimal fields. 
 
+pipeline: 'exaspim'
 input_path: 's3://<YOUR INPUT PATH>'
 output_path: "s3://<YOUR OUTPUT PATH>"
 worker_cells: [list oof cell 3-ples]
@@ -113,6 +114,7 @@ def create_starter_ymls(xml_path: str,
         worker_cells = cell_coords[start:end, :].tolist()
 
         configs = {}
+        configs['pipeline'] = 'exaspim'
         configs['input_path'] = input_s3_path
         configs['output_path'] = output_s3_path_base + 'full_res.zarr'
         configs['worker_cells'] = worker_cells

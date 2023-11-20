@@ -17,6 +17,7 @@ DATA CONTRACT:
 Dispim scheduler outputs a configuration file 
 with the following minimal fields. 
 
+pipeline: 'dispim'
 dataset_type: {BigStitcherDataset, BigStitcherDatasetChannel}
 channel: num
 input_path: 's3://<YOUR INPUT PATH>'
@@ -137,6 +138,7 @@ def create_starter_ymls(xml_path: str,
     # Channel 405: 
     output_path = Path(output_path)
     ch_405_configs = {}
+    ch_405_configs['pipeline'] = 'dispim'
     ch_405_configs['dataset_type'] = 'BigStitcherDataset' 
     ch_405_configs['input_path'] = input_s3_path
     ch_405_configs['output_path'] = output_s3_path_base + 'channel_405.zarr'
@@ -147,6 +149,7 @@ def create_starter_ymls(xml_path: str,
     channels.remove(405)
     for ch in channels:
         ch_X_configs = {}
+        ch_X_configs['pipeline'] = 'dispim'
         ch_X_configs['dataset_type'] = 'BigStitcherDatasetChannel'
         ch_X_configs['channel'] = ch
         ch_X_configs['input_path'] = input_s3_path
