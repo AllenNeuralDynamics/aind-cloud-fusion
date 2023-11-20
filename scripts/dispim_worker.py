@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 import torch
+import multiprocessing as mp
 import numpy as np
 
 import aind_cloud_fusion.blend as blend
@@ -35,7 +36,7 @@ def execute_job(yml_path: str,
     # Parse information from worker yaml
     # (See dispim_scheduler data contract)
     configs = read_config_yaml(yml_path)
-    dataset_type = configs[dataset_type]
+    dataset_type = configs['dataset_type']
     if 'channel' in configs: 
         channel = int(configs['channel'])
     input_path = configs['input_path']
@@ -124,15 +125,15 @@ def execute_job(yml_path: str,
 if __name__ == '__main__':
     # Special Initalization for CO: 
     torch.multiprocessing.set_start_method('forkserver', force=True)
-    torch.multiprocessing.util.abstract_sockets_supported = False
+    mp.util.abstract_sockets_supported = False
 
     num_cpus = int(os.environ.get("CO_CPUS", 16))  # retrieve env var, defaults to 16.
     print(f'{num_cpus=}')
     torch.set_num_threads(num_cpus)
 
-    yml_path = glob.glob('../data/*.yml')[0]
-    xml_path = glob.glob('../data/**/*.xml')[0]
-    output_path = os.path.abspath('../results')
+    yml_path = str(glob.glob('../data/*.yml')[0])
+    xml_path = str(glob.glob('../data/**/*.xml')[0])
+    output_path = str(os.path.abspath('../results'))
 
     execute_job(yml_path, 
                 xml_path, 
