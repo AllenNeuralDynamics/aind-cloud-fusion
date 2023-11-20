@@ -158,8 +158,8 @@ if __name__ == '__main__':
     xml_paths = glob.glob('../data/**/*.xml')
     assert len(xml_paths) > 0, "No xml found, please provide input xml."
     assert len(xml_paths) == 1, "Multiple xml's found, please provide single input xml."    
-    xml_path = xml_paths[0]
+    xml_path = str(xml_paths[0])
 
-    results_folder = os.path.abspath('../results')
+    results_folder = str(os.path.abspath('../results'))
     
     create_starter_ymls(xml_path, results_folder)
