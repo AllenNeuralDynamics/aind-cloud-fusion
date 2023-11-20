@@ -3,32 +3,49 @@ import shutil
 import unittest
 from pathlib import Path
 
+import torch
 import numpy as np
 import zarr
 
+import aind_cloud_fusion.blend as blend
+import aind_cloud_fusion.fusion as fusion
 import aind_cloud_fusion.io as io
-import aind_cloud_fusion.runtime as runtime
+import aind_cloud_fusion.geometry as geometry
 from test_dataset import (
     generate_x_dataset,
     generate_y_dataset,
     generate_z_dataset,
 )
 
-
-# NOTE:
-# For convenient automated testing,
-# TestWorker operates on synthetic data
-# and outputs test outputs locally.
-class TestWorker(unittest.TestCase):
+class TestFusion(unittest.TestCase):
     def setUp(self):
-        self.config_yaml_path = "tests/test_worker_config.yml"
+        # Initalize Application Objects
+        # Application Object: Dataset
+        # Generated in each test case
+        
+        # Application Object: OUTPUT_PARAMS
+        self.output_path = "./tmp/"
+        Path(self.output_path).mkdir()
+        # Generate in each test case
 
-        params = io.read_config_yaml(self.config_yaml_path)
-        self.output_path = Path(params["output"]["path"])
-        self.output_path.mkdir(parents=True, exist_ok=True)
+        # Application Object: RUNTIME PARAMS
+        # Will define worker_cells at the end
+        self.RUNTIME_PARAMS = io.RuntimeParameters(
+            use_gpus=False,
+            devices=[torch.device("cpu")],
+            pool_size=16
+        )
+
+        # Application Parameter: CELL_SIZE
+        self.CELL_SIZE = [100, 100, 100]
+
+        # Application Parameter: POST_REG_TFMS
+        self.POST_REG_TFMS: list[geometry.Affine] = []
+
+        # Application Object: BLENDING_MODULE
+        self.BLENDING_MODULE = blend.MaxProjection()
 
     def _read_zarr_zyx_volume(self, zarr_path: str):
-        output_path = self.node.OUTPUT_PARAMS.path
         output_path = zarr_path + "/0"
         arr = zarr.open(output_path, mode="r")
         fused_data = arr[0, 0, :, :, :]
@@ -37,51 +54,80 @@ class TestWorker(unittest.TestCase):
 
     def test_fusion_in_z_axis(self):
         # Generate Dataset
-        ground_truth, dataset = generate_z_dataset()
+        ground_truth, DATASET = generate_z_dataset()
 
-        # Initalize Runtime, Adjust output path
-        self.node = runtime.Worker(self.config_yaml_path, dataset)
-        self.node.OUTPUT_PARAMS.path = str(
-            self.output_path / "fused_in_z.zarr"
+        # Generate Output Parameters
+        zarr_path = str(
+            Path(self.OUTPUT_PARAMS.path) / "fused_in_z.zarr"
+        )
+        OUTPUT_PARAMS = io.OutputParameters(
+            path=zarr_path,
+            chunksize=(1, 1, 100, 100, 100),
+            resolution_zyx=(1.0, 1.0, 1.0),
         )
 
         # Run Fusion
-        self.node.run()
+        fusion.run_fusion(DATASET, 
+                          OUTPUT_PARAMS,
+                          self.RUNTIME_PARAMS,
+                          self.CELL_SIZE,
+                          self.POST_REG_TFMS,
+                          self.BLENDING_MODULE)
 
         # Read output and compare with ground truth
-        fused_data = self._read_zarr_zyx_volume(self.node.OUTPUT_PARAMS.path)
+        fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)
         self.assertTrue(np.allclose(fused_data, ground_truth))
 
     def test_fusion_in_y_axis(self):
-        ground_truth, dataset = generate_y_dataset()
+        # Generate Dataset
+        ground_truth, DATASET = generate_y_dataset()
 
-        # Initalize Runtime, Adjust output path
-        self.node = runtime.Worker(self.config_yaml_path, dataset)
-        self.node.OUTPUT_PARAMS.path = str(
-            self.output_path / "fused_in_y.zarr"
+        # Generate Output Parameters
+        zarr_path = str(
+            Path(self.OUTPUT_PARAMS.path) / "fused_in_y.zarr"
+        )
+        OUTPUT_PARAMS = io.OutputParameters(
+            path=zarr_path,
+            chunksize=(1, 1, 100, 100, 100),
+            resolution_zyx=(1.0, 1.0, 1.0),
         )
 
         # Run Fusion
-        self.node.run()
+        fusion.run_fusion(DATASET, 
+                          OUTPUT_PARAMS,
+                          self.RUNTIME_PARAMS,
+                          self.CELL_SIZE,
+                          self.POST_REG_TFMS,
+                          self.BLENDING_MODULE)
 
         # Read output and compare with ground truth
-        fused_data = self._read_zarr_zyx_volume(self.node.OUTPUT_PARAMS.path)
+        fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)
         self.assertTrue(np.allclose(fused_data, ground_truth))
 
     def test_fusion_in_x_axis(self):
-        ground_truth, dataset = generate_x_dataset()
+        # Generate Dataset
+        ground_truth, DATASET = generate_x_dataset()
 
-        # Initalize Runtime, Adjust output path
-        self.node = runtime.Worker(self.config_yaml_path, dataset)
-        self.node.OUTPUT_PARAMS.path = str(
-            self.output_path / "fused_in_x.zarr"
+        # Generate Output Parameters
+        zarr_path = str(
+            Path(self.OUTPUT_PARAMS.path) / "fused_in_x.zarr"
+        )
+        OUTPUT_PARAMS = io.OutputParameters(
+            path=zarr_path,
+            chunksize=(1, 1, 100, 100, 100),
+            resolution_zyx=(1.0, 1.0, 1.0),
         )
 
         # Run Fusion
-        self.node.run()
+        fusion.run_fusion(DATASET, 
+                          OUTPUT_PARAMS,
+                          self.RUNTIME_PARAMS,
+                          self.CELL_SIZE,
+                          self.POST_REG_TFMS,
+                          self.BLENDING_MODULE)
 
         # Read output and compare with ground truth
-        fused_data = self._read_zarr_zyx_volume(self.node.OUTPUT_PARAMS.path)
+        fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)
         self.assertTrue(np.allclose(fused_data, ground_truth))
 
     def tearDown(self):
@@ -92,7 +138,7 @@ class TestWorker(unittest.TestCase):
 if __name__ == "__main__":
     # unittest.main()
     suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(TestWorker))
+    suite.addTest(unittest.makeSuite(TestFusion))
 
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

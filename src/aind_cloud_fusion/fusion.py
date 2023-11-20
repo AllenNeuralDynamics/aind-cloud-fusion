@@ -1,4 +1,5 @@
 """Core fusion algorithm."""
+import os
 import logging
 import time
 
@@ -214,6 +215,9 @@ def run_fusion(
     Output: Writes to location in output params.
     """
 
+    # Important for prevent running out of resources
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
     logging.basicConfig(
         format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M"
     )
@@ -246,96 +250,121 @@ def run_fusion(
                 )
                 cell_num += 1
 
-    # Run Fusion: Fill work queue with inital tasks
-    # Task-specific info includes process_args and device.
-    if runtime_params.use_gpus:
-        LOGGER.info(f"GPU Runtime: Using {runtime_params.pool_size} GPUs")
-    else:
-        LOGGER.info(f"CPU Runtime: Using {runtime_params.pool_size} CPUs")
-    start_run = time.time()
-    active_processes: list[
-        tuple
-    ] = []  # (process, device, cell_num, start_time)
-    for i in range(runtime_params.pool_size):
-        p_args = process_args.pop(0)
-        p = torch.multiprocessing.Process(
-            target=color_cell,
-            args=(
-                tile_arrays,
-                tile_transforms,
-                tile_sizes_zyx,
-                tile_aabbs,
-                output_volume,
-                output_volume_origin,
-                cell_size,
-                blend_module,
-                p_args["z"],
-                p_args["y"],
-                p_args["x"],
-                runtime_params.devices[i % len(runtime_params.devices)],
-                LOGGER,
-            ),
-        )
-        active_processes.append(
-            (
-                p,
-                runtime_params.devices[i % len(runtime_params.devices)],
-                p_args["cell_num"],
-                time.time(),
+    # SINGLE-PROCESS EXECUTION
+    if runtime_params.pool_size == 1: 
+        start_run = time.time()
+
+        # Run fusion: Simply iterate through all work
+        for p_args in process_args:
+            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
+            start_time = time.time()
+            color_cell(tile_arrays,
+                    tile_transforms,
+                    tile_sizes_zyx,
+                    tile_aabbs,
+                    output_volume,
+                    output_volume_origin,
+                    cell_size,
+                    blend_module,
+                    p_args["z"],
+                    p_args["y"],
+                    p_args["x"],
+                    runtime_params.devices[0],
+                    LOGGER,
             )
-        )
-        LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
-        p.start()
+            LOGGER.info(
+                f"Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}"
+            )
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
 
-    # Run Fusion: Exhaust all the tasks
-    # Tasks all implictly defined in process_args buffer
-    while len(active_processes) != 0:
-        tmp = []
-        for p, device, cell_num, start_time in active_processes:
-            p.join(
-                timeout=0
-            )  # timeout indicates do not wait until the process is explicitly finished
-
-            if p.is_alive():
-                tmp.append((p, device, cell_num, start_time))
-            else:
-                p.close()
-                del p 
-                LOGGER.info(
-                    f"Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}"
+    # MULTI-PROCESS EXECUTION
+    else:
+        # Run Fusion: Fill work queue (active processes) with inital tasks
+        # Task-specific info includes process_args and device.
+        start_run = time.time()
+        active_processes: list[
+            tuple
+        ] = []  # (process, device, cell_num, start_time)
+        for i in range(runtime_params.pool_size):
+            p_args = process_args.pop(0)
+            p = torch.multiprocessing.Process(
+                target=color_cell,
+                args=(
+                    tile_arrays,
+                    tile_transforms,
+                    tile_sizes_zyx,
+                    tile_aabbs,
+                    output_volume,
+                    output_volume_origin,
+                    cell_size,
+                    blend_module,
+                    p_args["z"],
+                    p_args["y"],
+                    p_args["x"],
+                    runtime_params.devices[i % len(runtime_params.devices)],
+                    LOGGER,
+                ),
+            )
+            active_processes.append(
+                (
+                    p,
+                    runtime_params.devices[i % len(runtime_params.devices)],
+                    p_args["cell_num"],
+                    time.time(),
                 )
+            )
+            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
+            p.start()
 
-                if len(process_args) != 0:
-                    p_args = process_args.pop(0)
-                    new_p = torch.multiprocessing.Process(
-                        target=color_cell,
-                        args=(
-                            tile_arrays,
-                            tile_transforms,
-                            tile_sizes_zyx,
-                            tile_aabbs,
-                            output_volume,
-                            output_volume_origin,
-                            cell_size,
-                            blend_module,
-                            p_args["z"],
-                            p_args["y"],
-                            p_args["x"],
-                            device,
-                            LOGGER,
-                        ),
-                    )
-                    tmp.append(
-                        (new_p, device, p_args["cell_num"], time.time())
-                    )
+        # Run Fusion: Exhaust all the tasks
+        # Tasks all implictly defined in process_args buffer
+        while len(active_processes) != 0:
+            tmp = []
+            for p, device, cell_num, start_time in active_processes:
+                p.join(
+                    timeout=0
+                )  # timeout indicates do not wait until the process is explicitly finished
+
+                if p.is_alive():
+                    tmp.append((p, device, cell_num, start_time))
+                else:
+                    p.close()
+                    del p 
                     LOGGER.info(
-                        f'Starting Cell {p_args["cell_num"]}/{est_total_cells}'
+                        f"Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}"
                     )
-                    new_p.start()
 
-            active_processes = tmp
+                    if len(process_args) != 0:
+                        p_args = process_args.pop(0)
+                        new_p = torch.multiprocessing.Process(
+                            target=color_cell,
+                            args=(
+                                tile_arrays,
+                                tile_transforms,
+                                tile_sizes_zyx,
+                                tile_aabbs,
+                                output_volume,
+                                output_volume_origin,
+                                cell_size,
+                                blend_module,
+                                p_args["z"],
+                                p_args["y"],
+                                p_args["x"],
+                                device,
+                                LOGGER,
+                            ),
+                        )
+                        tmp.append(
+                            (new_p, device, p_args["cell_num"], time.time())
+                        )
+                        LOGGER.info(
+                            f'Starting Cell {p_args["cell_num"]}/{est_total_cells}'
+                        )
+                        new_p.start()
 
-    LOGGER.info(f"Runtime: {time.time() - start_run}")
+                active_processes = tmp
+
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
 
 
 def color_cell(
