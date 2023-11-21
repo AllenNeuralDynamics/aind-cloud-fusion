@@ -12,11 +12,11 @@ import numpy as np
 from pathlib import Path
 import torch
 
+import aind_cloud_fusion.io as io
 import aind_cloud_fusion.blend as blend
 import aind_cloud_fusion.fusion as fusion
 import aind_cloud_fusion.geometry as geometry
-import aind_cloud_fusion.io as io
-
+import script_utils
 
 """
 DATA CONTRACT: 
@@ -28,10 +28,6 @@ input_path: 's3://<YOUR INPUT PATH>'
 output_path: "s3://<YOUR OUTPUT PATH>"
 worker_cells: [list of cell 3-ples]
 """
-
-def write_config_yaml(yaml_path: str, yaml_data: dict) -> None:
-    with open(yaml_path, "w") as file:
-        yaml.dump(yaml_data, file)
 
 def create_starter_ymls(xml_path: str, 
                         output_path: str, 
@@ -58,6 +54,10 @@ def create_starter_ymls(xml_path: str,
     input_s3_path = 's3://aind-open-data/' + parts[2] + '/' + parts[3] + '/'
     output_s3_path_base = 's3://aind-open-data/' + parts[2] + '_full_res/'
 
+    # Figure out the exaspim channel
+    channels = script_utils.get_unique_channels_for_dataset(input_s3_path)
+    channel = int(channels[0])   # (Should only be one channel)
+
     # Init application objects to init fusion scheduling. 
     # Application Object: DATASET
     xml_path = str(Path(xml_path))
@@ -68,7 +68,7 @@ def create_starter_ymls(xml_path: str,
     OUTPUT_PARAMS = io.OutputParameters(
         path=output_path,
         chunksize=(1, 1, 128, 128, 128),
-        resolution_zyx=(1.0, 0.748, 0.748),
+        resolution_zyx=DATASET.tile_resolution_zyx,
     )
 
     # Application Object: RUNTIME PARAMS
@@ -116,7 +116,7 @@ def create_starter_ymls(xml_path: str,
         configs = {}
         configs['pipeline'] = 'exaspim'
         configs['input_path'] = input_s3_path
-        configs['output_path'] = output_s3_path_base + 'channel_561.zarr'
+        configs['output_path'] = output_s3_path_base + f'channel_{channel}.zarr'
         configs['worker_cells'] = worker_cells
 
         yaml_path = (
