@@ -116,7 +116,7 @@ def create_starter_ymls(xml_path: str,
         configs = {}
         configs['pipeline'] = 'exaspim'
         configs['input_path'] = input_s3_path
-        configs['output_path'] = output_s3_path_base + 'full_res.zarr'
+        configs['output_path'] = output_s3_path_base + 'channel_561.zarr'
         configs['worker_cells'] = worker_cells
 
         yaml_path = (
@@ -136,4 +136,4 @@ if __name__ == '__main__':
     
     create_starter_ymls(xml_path, 
                         output_path, 
-                        num_workers = 64)
+                        num_workers = 500)
