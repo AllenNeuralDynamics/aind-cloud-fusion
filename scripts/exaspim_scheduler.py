@@ -26,7 +26,7 @@ with the following minimal fields.
 pipeline: 'exaspim'
 input_path: 's3://<YOUR INPUT PATH>'
 output_path: "s3://<YOUR OUTPUT PATH>"
-worker_cells: [list oof cell 3-ples]
+worker_cells: [list of cell 3-ples]
 """
 
 def write_config_yaml(yaml_path: str, yaml_data: dict) -> None:
@@ -68,7 +68,7 @@ def create_starter_ymls(xml_path: str,
     OUTPUT_PARAMS = io.OutputParameters(
         path=output_path,
         chunksize=(1, 1, 128, 128, 128),
-        resolution_zyx=(0.5, 0.5, 0.5),
+        resolution_zyx=(1.0, 0.748, 0.748),
     )
 
     # Application Object: RUNTIME PARAMS
@@ -121,7 +121,7 @@ def create_starter_ymls(xml_path: str,
 
         yaml_path = (
             Path(output_path)
-            / f"worker_config_{i}.yaml"
+            / f"worker_config_{i}.yml"
         )
         io.write_config_yaml(
             yaml_path=yaml_path, yaml_data=configs
@@ -129,10 +129,10 @@ def create_starter_ymls(xml_path: str,
 
 if __name__ == '__main__':
     xml_path = str(glob.glob('../data/**/*.xml')[0])
-    print(f'{xml_path=}')
     output_path = str(os.path.abspath('../results'))
-    print(f'{output_path=}')
 
+    print(f'{xml_path=}')
+    print(f'{output_path=}')
     
     create_starter_ymls(xml_path, 
                         output_path, 
