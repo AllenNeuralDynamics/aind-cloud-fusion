@@ -235,20 +235,10 @@ def run_fusion(
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
 
-    # Run Fusion: Define all work
-    z_cnt, y_cnt, x_cnt = get_cell_count_zyx(output_volume_size, cell_size)
-    est_total_cells = z_cnt * y_cnt * x_cnt
-    LOGGER.info(f"Estimated Total Cells: {est_total_cells}")
-
     process_args: list[dict] = []
-    cell_num = 0
-    for z in range(z_cnt):
-        for y in range(y_cnt):
-            for x in range(x_cnt):
-                process_args.append(
-                    {"cell_num": cell_num, "z": z, "y": y, "x": x}
-                )
-                cell_num += 1
+    for cell_num, cell in enumerate(runtime_params.worker_cells):
+        z, y, x = cell
+        process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
 
     # SINGLE-PROCESS EXECUTION
     if runtime_params.pool_size == 1: 
