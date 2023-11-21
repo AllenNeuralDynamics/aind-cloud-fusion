@@ -31,7 +31,7 @@ def run_exaspim_worker(yml_path: str,
     # (See dispim_scheduler data contract)
     configs = read_config_yaml(yml_path)
     input_path = configs['input_path']
-    output_path = configs['output_path']
+    output_s3_path = configs['output_path']
     worker_cells = [tuple(cell) for cell in configs['worker_cells']] 
 
     # Application Object: DATASET
@@ -41,9 +41,9 @@ def run_exaspim_worker(yml_path: str,
 
     # Application Object: OUTPUT_PARAMS
     OUTPUT_PARAMS = io.OutputParameters(
-        path=output_path,
+        path=output_s3_path,
         chunksize=(1, 1, 128, 128, 128),
-        resolution_zyx=(0.5, 0.5, 0.5),
+        resolution_zyx=(1.0, 0.748, 0.748),
     )
 
     # Application Object: RUNTIME PARAMS
@@ -76,7 +76,7 @@ def run_exaspim_worker(yml_path: str,
     # Unique log filename
     unique_id = str(uuid.uuid4())
     timestamp = int(time.time() * 1000)
-    unique_file_name = str(Path(output_path) / f"file_{timestamp}_{unique_id}.yaml")
+    unique_file_name = str(Path(output_path) / f"file_{timestamp}_{unique_id}.yml")
 
     log_content = {}
     log_content['output_path'] = OUTPUT_PARAMS.path
@@ -95,7 +95,7 @@ def run_dispim_worker(yml_path: str,
     if 'channel' in configs: 
         channel = int(configs['channel'])
     input_path = configs['input_path']
-    output_path = configs['output_path']
+    output_s3_path = configs['output_path']
 
     # Initialize Application Objects
     # Application Object: DATASET
@@ -112,7 +112,7 @@ def run_dispim_worker(yml_path: str,
 
     # Application Object: OUTPUT_PARAMS
     OUTPUT_PARAMS = io.OutputParameters(
-        path=output_path,
+        path=output_s3_path,
         chunksize=(1, 1, 128, 128, 128),
         resolution_zyx=(0.5, 0.5, 0.5),
     )
@@ -167,7 +167,7 @@ def run_dispim_worker(yml_path: str,
     # Unique log filename
     unique_id = str(uuid.uuid4())
     timestamp = int(time.time() * 1000)
-    unique_file_name = str(Path(output_path) / f"file_{timestamp}_{unique_id}.yaml")
+    unique_file_name = str(Path(output_path) / f"file_{timestamp}_{unique_id}.yml")
 
     log_content = {}
     log_content['output_path'] = OUTPUT_PARAMS.path
@@ -175,7 +175,7 @@ def run_dispim_worker(yml_path: str,
 
     with open(unique_file_name, "w") as file:
         yaml.dump(log_content, file)
-    
+
 
 def execute_job(yml_path: str, 
                 xml_path: str,
@@ -211,9 +211,13 @@ if __name__ == '__main__':
     print(f'{num_cpus=}')
     torch.set_num_threads(num_cpus)
 
-    yml_path = str(glob.glob('../data/*.yaml')[0])
+    yml_path = str(glob.glob('../data/*.yml')[0])
     xml_path = str(glob.glob('../data/**/*.xml')[0])
     output_path = str(os.path.abspath('../results'))
+
+    print(f'{yml_path=}')
+    print(f'{xml_path=}')
+    print(f'{output_path=}')
 
     execute_job(yml_path, 
                 xml_path, 
