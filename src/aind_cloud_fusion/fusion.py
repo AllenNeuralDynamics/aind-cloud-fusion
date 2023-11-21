@@ -236,6 +236,7 @@ def run_fusion(
     LOGGER.info(f"{output_volume_size=}")
 
     process_args: list[dict] = []
+    num_cells = len(runtime_params.worker_cells)
     for cell_num, cell in enumerate(runtime_params.worker_cells):
         z, y, x = cell
         process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
@@ -246,7 +247,7 @@ def run_fusion(
 
         # Run fusion: Simply iterate through all work
         for p_args in process_args:
-            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
+            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
             start_time = time.time()
             color_cell(tile_arrays,
                     tile_transforms,
@@ -263,7 +264,7 @@ def run_fusion(
                     LOGGER,
             )
             LOGGER.info(
-                f"Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}"
+                f"Finished Cell {cell_num}/{num_cells}: {time.time() - start_time}"
             )
         LOGGER.info(f"Runtime: {time.time() - start_run}")
 
@@ -303,7 +304,7 @@ def run_fusion(
                     time.time(),
                 )
             )
-            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{est_total_cells}')
+            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
             p.start()
 
         # Run Fusion: Exhaust all the tasks
@@ -321,7 +322,7 @@ def run_fusion(
                     p.close()
                     del p 
                     LOGGER.info(
-                        f"Finished Cell {cell_num}/{est_total_cells}: {time.time() - start_time}"
+                        f"Finished Cell {cell_num}/{num_cells}: {time.time() - start_time}"
                     )
 
                     if len(process_args) != 0:
@@ -348,7 +349,7 @@ def run_fusion(
                             (new_p, device, p_args["cell_num"], time.time())
                         )
                         LOGGER.info(
-                            f'Starting Cell {p_args["cell_num"]}/{est_total_cells}'
+                            f'Starting Cell {p_args["cell_num"]}/{num_cells}'
                         )
                         new_p.start()
 
