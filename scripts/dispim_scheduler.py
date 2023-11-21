@@ -5,9 +5,7 @@ Defines configuration file with unique fields per dispim worker.
 from collections import OrderedDict
 import glob
 import os
-import re
 
-import boto3
 from pathlib import Path
 import xmltodict
 import yaml
