@@ -215,9 +215,6 @@ def run_fusion(
     Output: Writes to location in output params.
     """
 
-    # Important for prevent running out of resources
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
-
     logging.basicConfig(
         format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M"
     )
@@ -264,12 +261,15 @@ def run_fusion(
                     LOGGER,
             )
             LOGGER.info(
-                f"Finished Cell {cell_num}/{num_cells}: {time.time() - start_time}"
+                f"Finished Cell {p_args['cell_num']}/{num_cells}: {time.time() - start_time}"
             )
         LOGGER.info(f"Runtime: {time.time() - start_run}")
 
     # MULTI-PROCESS EXECUTION
     else:
+        # Important for prevent running out of resources
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
         # Run Fusion: Fill work queue (active processes) with inital tasks
         # Task-specific info includes process_args and device.
         start_run = time.time()
