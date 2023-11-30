@@ -136,4 +136,4 @@ if __name__ == '__main__':
     
     create_starter_ymls(xml_path, 
                         output_path, 
-                        num_workers = 500)
+                        num_workers = 1000)
