@@ -50,11 +50,11 @@ def run_exaspim_worker(yml_path: str,
     RUNTIME_PARAMS = io.RuntimeParameters(
         use_gpus=False,
         devices=[torch.device("cpu")],
-        pool_size=1, 
+        pool_size=16, 
         worker_cells=worker_cells
     )
     # Application Parameter: CELL_SIZE
-    CELL_SIZE = [512, 512, 512]
+    CELL_SIZE = [256, 256, 256]
 
     # Application Parameter: POST_REG_TFMS
     POST_REG_TFMS: list[geometry.Affine] = []
@@ -122,11 +122,11 @@ def run_dispim_worker(yml_path: str,
     RUNTIME_PARAMS = io.RuntimeParameters(
         use_gpus=False,
         devices=[torch.device("cpu")],
-        pool_size=1
+        pool_size=16
     )
 
     # Application Parameter: CELL_SIZE
-    CELL_SIZE = [512, 512, 512]
+    CELL_SIZE = [256, 256, 256]
 
     # Application Parameter: POST_REG_TFMS
     POST_REG_TFMS: list[geometry.Affine] = []
