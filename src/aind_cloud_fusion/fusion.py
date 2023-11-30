@@ -152,14 +152,18 @@ def initalize_output_volume(
 
     s3 = s3fs.S3FileSystem(
         config_kwargs={
-            'max_pool_connections': 50
+            'max_pool_connections': 50,
+            's3': {
+                'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
+            },
+            'retries': {
+                'total_max_attempts': 100,
+                'mode': 'adaptive',
+            }
         }
     )
     store = s3fs.S3Map(root=output_params.path, s3=s3)
     out_group = zarr.group(store=store, overwrite=True)
-
-    # Results in max-pool connection errors
-    # out_group = zarr.open_group(output_params.path, mode="w")
 
     path = "0"
     chunksize = output_params.chunksize
@@ -215,9 +219,6 @@ def run_fusion(
     Output: Writes to location in output params.
     """
 
-    # Important for prevent running out of resources
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
-
     logging.basicConfig(
         format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M"
     )
@@ -264,12 +265,15 @@ def run_fusion(
                     LOGGER,
             )
             LOGGER.info(
-                f"Finished Cell {cell_num}/{num_cells}: {time.time() - start_time}"
+                f"Finished Cell {p_args['cell_num']}/{num_cells}: {time.time() - start_time}"
             )
         LOGGER.info(f"Runtime: {time.time() - start_run}")
 
     # MULTI-PROCESS EXECUTION
     else:
+        # Important for prevent running out of resources
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
         # Run Fusion: Fill work queue (active processes) with inital tasks
         # Task-specific info includes process_args and device.
         start_run = time.time()
