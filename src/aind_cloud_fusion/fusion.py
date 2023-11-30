@@ -153,8 +153,12 @@ def initalize_output_volume(
     s3 = s3fs.S3FileSystem(
         config_kwargs={
             'max_pool_connections': 50,
+            's3': {
+                'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
+            },
             'retries': {
-                'mode': 'standard',
+                'total_max_attempts': 100,
+                'mode': 'adaptive',
             }
         }
     )
