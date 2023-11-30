@@ -152,14 +152,14 @@ def initalize_output_volume(
 
     s3 = s3fs.S3FileSystem(
         config_kwargs={
-            'max_pool_connections': 50
+            'max_pool_connections': 50,
+            'retries': {
+                'mode': 'standard',
+            }
         }
     )
     store = s3fs.S3Map(root=output_params.path, s3=s3)
     out_group = zarr.group(store=store, overwrite=True)
-
-    # Results in max-pool connection errors
-    # out_group = zarr.open_group(output_params.path, mode="w")
 
     path = "0"
     chunksize = output_params.chunksize
