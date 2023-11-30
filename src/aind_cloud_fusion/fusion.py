@@ -555,7 +555,11 @@ def color_cell(
             image_crop, tile_coords, padding_mode="zeros", mode="nearest"
         )
         fused_cell = blend_module.blend(
-            [fused_cell, tile_contribution], device=device
+            fused_cell, 
+            [tile_contribution],
+            device=device, 
+            chunk_tile_ids=[tile_id],
+            cell_box=cell_box
         )
 
         del tile_coords
