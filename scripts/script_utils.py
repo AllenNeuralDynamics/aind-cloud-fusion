@@ -4,6 +4,7 @@ Utilities for scripts.
 
 import boto3
 import re
+import yaml
 
 def write_config_yaml(yaml_path: str, yaml_data: dict) -> None:
     with open(yaml_path, "w") as file:
