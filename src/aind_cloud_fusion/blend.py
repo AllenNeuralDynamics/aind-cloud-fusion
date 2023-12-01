@@ -19,7 +19,8 @@ class BlendingModule:
     def blend(self, 
               snowball_chunk: torch.Tensor, 
               chunks: list[torch.Tensor], 
-              device: torch.device, **kwargs
+              device: torch.device,
+              kwargs = {}
     ) -> torch.Tensor:
         """
         snowball_chunk: base chunk to modify.
@@ -27,6 +28,8 @@ class BlendingModule:
             and limit peak memory usage. 
         chunks: 
             Chunks to blend into snowball_chunk
+        kwargs: 
+            Extra keyword arguments  
         """
         
         raise NotImplementedError(
@@ -43,7 +46,8 @@ class MaxProjection(BlendingModule):
     def blend(self, 
               snowball_chunk, 
               chunks: list[torch.Tensor], 
-              device: torch.device
+              device: torch.device,
+              kwargs = {}
     ) -> torch.Tensor:
         """
         Parameters
@@ -285,7 +289,7 @@ class MaskedBlending(BlendingModule):
               snowball_chunk: torch.Tensor, 
               chunks: list[torch.Tensor], 
               device: torch.device, 
-              **kwargs
+              kwargs = {}
     ) -> torch.Tensor:
         
         # Keyword arguments:
