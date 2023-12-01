@@ -67,7 +67,7 @@ class TestMaskedFusion(unittest.TestCase):
         )
 
         # Generate Blending
-        _, _, _, tile_aabbs, _, _ = \
+        _, _, _, tile_aabbs, output_volume_size, _ = \
         fusion.initialize_fusion(DATASET,
                                  self.POST_REG_TFMS,
                                  OUTPUT_PARAMS)
@@ -76,7 +76,17 @@ class TestMaskedFusion(unittest.TestCase):
                                                     mask_axes=[0],
                                                     mask_percent=1.0)
 
-        # Run Fusion
+        # Init and Run Fusion
+        worker_cells = []
+        z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
+            output_volume_size, self.CELL_SIZE
+        )
+        for z in range(z_cnt):
+            for y in range(y_cnt):
+                for x in range(x_cnt):
+                    worker_cells.append((z, y, x))
+        self.RUNTIME_PARAMS.worker_cells = worker_cells
+
         fusion.run_fusion(DATASET, 
                           OUTPUT_PARAMS,
                           self.RUNTIME_PARAMS,
@@ -103,7 +113,7 @@ class TestMaskedFusion(unittest.TestCase):
         )
 
         # Generate Blending
-        _, _, _, tile_aabbs, _, _ = \
+        _, _, _, tile_aabbs, output_volume_size, _ = \
         fusion.initialize_fusion(DATASET,
                                  self.POST_REG_TFMS,
                                  OUTPUT_PARAMS)
@@ -112,7 +122,17 @@ class TestMaskedFusion(unittest.TestCase):
                                                     mask_axes=[1],
                                                     mask_percent=1.0)
 
-        # Run Fusion
+        # Init and Run Fusion
+        worker_cells = []
+        z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
+            output_volume_size, self.CELL_SIZE
+        )
+        for z in range(z_cnt):
+            for y in range(y_cnt):
+                for x in range(x_cnt):
+                    worker_cells.append((z, y, x))
+        self.RUNTIME_PARAMS.worker_cells = worker_cells
+
         fusion.run_fusion(DATASET, 
                           OUTPUT_PARAMS,
                           self.RUNTIME_PARAMS,
@@ -139,7 +159,7 @@ class TestMaskedFusion(unittest.TestCase):
         )
 
         # Generate Blending
-        _, _, _, tile_aabbs, _, _ = \
+        _, _, _, tile_aabbs, output_volume_size, _ = \
         fusion.initialize_fusion(DATASET,
                                  self.POST_REG_TFMS,
                                  OUTPUT_PARAMS)
@@ -148,7 +168,16 @@ class TestMaskedFusion(unittest.TestCase):
                                                     mask_axes=[2],
                                                     mask_percent=1.0)
 
-        # Run Fusion
+        # Init and Run Fusion
+        z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
+            output_volume_size, self.CELL_SIZE
+        )
+        for z in range(z_cnt):
+            for y in range(y_cnt):
+                for x in range(x_cnt):
+                    worker_cells.append((z, y, x))
+        self.RUNTIME_PARAMS.worker_cells = worker_cells
+
         fusion.run_fusion(DATASET, 
                           OUTPUT_PARAMS,
                           self.RUNTIME_PARAMS,
