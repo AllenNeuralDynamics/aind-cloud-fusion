@@ -125,23 +125,28 @@ class MaskedBlending(BlendingModule):
         x_clusters = self._cluster_1d(x_buffer)
 
         # Indices of tile layout = (tile_point - origin) / tile_stride
-        origin = np.minimum(np.array(points))
+        points = np.array(points)
+        origin = np.zeros(3)
+        origin[0] = np.min(points[:, 0])
+        origin[1] = np.min(points[:, 1])
+        origin[2] = np.min(points[:, 2])
+
         tile_stride = [1, 1, 1]
         if len(z_clusters) != 1:
-            tile_stride[0] = z_clusters[0][0] - z_clusters[1][0]
+            tile_stride[0] = z_clusters[1][0] - z_clusters[0][0]
         if len(y_clusters) != 1:
-            tile_stride[1] = y_clusters[0][0] - y_clusters[1][0]
+            tile_stride[1] = y_clusters[1][0] - y_clusters[0][0]
         if len(x_clusters) != 1:
-            tile_stride[2] = x_clusters[0][0] - x_clusters[1][0]
+            tile_stride[2] = x_clusters[1][0] - x_clusters[0][0]
         
         z_dim, y_dim, x_dim = len(z_clusters), len(y_clusters), len(x_clusters)
-        TILE_LAYOUT = np.zeros((z_dim, y_dim, x_dim))
+        TILE_LAYOUT = np.zeros((z_dim, y_dim, x_dim)).astype('uint8')
         print('f{TILE_LAYOUT.shape=}')
         for t_id, pt in zip(t_ids, points):
             z = round((pt[0] - origin[0]) / tile_stride[0])
             y = round((pt[1] - origin[1]) / tile_stride[1])
-            x = round((pt[2] - origin[2]) / tile_stride[2])       
-            TILE_LAYOUT[z, y, x] = t_id
+            x = round((pt[2] - origin[2]) / tile_stride[2])
+            TILE_LAYOUT[z, y, x] = int(t_id)
 
         # Create mask data structures 
         # tile_to_mask_ids: Maps tile_id to associated mask_ids 
@@ -223,7 +228,7 @@ class MaskedBlending(BlendingModule):
         # [[1, 2, 3], [10], [50]]
 
         clusters = []
-        EPS = 50   # Bin based on 50-pixel interval
+        EPS = 20   # Bin based on 20-pixel interval
         buffer_sorted = sorted(buffer)
         curr_point = buffer_sorted[0]
         curr_cluster = [curr_point]
@@ -248,21 +253,7 @@ class MaskedBlending(BlendingModule):
         # O: mask_aabb
 
         # Find overlap region between adjacent tiles
-        # Check AABB's are colliding, meaning they colllide in all 3 axes
-        assert (aabb_1[0] <= aabb_2[0] and aabb_1[1] >= aabb_2[0]) and \
-               (aabb_1[2] <= aabb_2[2] and aabb_1[3] >= aabb_2[2]) and \
-               (aabb_1[4] <= aabb_2[4] and aabb_1[5] >= aabb_2[4]), \
-               'Input AABBs are not colliding.'
-        
-        # Between two colliding intervals A and B, 
-        # the overlap interval is the maximum of (A_min, B_min)
-        # and the minimum of (A_max, B_max).
-        overlap_aabb = (np.max([aabb_1[0], aabb_2[0]]),
-                    np.min([aabb_1[1], aabb_2[1]]),
-                    np.max([aabb_1[2], aabb_2[2]]),
-                    np.min([aabb_1[3], aabb_2[3]]),
-                    np.max([aabb_1[4], aabb_2[4]]),
-                    np.min([aabb_1[5], aabb_2[5]]))
+        overlap_aabb = self._get_overlap_aabb(aabb_1, aabb_2)
     
         # Convert overlap region into mask 
         # (Masks will not be tight to output volume boundary)
@@ -276,14 +267,30 @@ class MaskedBlending(BlendingModule):
         if mask_axis == 2: 
             max_x = min_x + ((max_x - min_x) * self.mask_percent)
 
-        mask_aabb = (floor(min_z / cz) * cz, 
-                    ceil(max_z / cz) * cz,
-                    floor(min_y / cy) * cy,
-                    ceil(max_y / cy) * cy,
-                    floor(min_x / cx) * cx,
-                    ceil(max_x / cx) * cx)
+        mask_aabb = (min_z, max_z, min_y, max_y, min_x, max_x)
         
         return mask_aabb
+
+    def _get_overlap_aabb(self, 
+                          aabb_1: geometry.AABB, 
+                          aabb_2: geometry.AABB):
+        # Check AABB's are colliding, meaning they colllide in all 3 axes
+        assert (aabb_1[1] > aabb_2[0] and aabb_1[0] < aabb_2[1]) and \
+               (aabb_1[3] > aabb_2[2] and aabb_1[2] < aabb_2[3]) and \
+               (aabb_1[5] > aabb_2[4] and aabb_1[4] < aabb_2[5]), \
+               f'Input AABBs are not colliding: {aabb_1=}, {aabb_2=}'
+
+        # Between two colliding intervals A and B, 
+        # the overlap interval is the maximum of (A_min, B_min)
+        # and the minimum of (A_max, B_max).
+        overlap_aabb = (np.max([aabb_1[0], aabb_2[0]]),
+                    np.min([aabb_1[1], aabb_2[1]]),
+                    np.max([aabb_1[2], aabb_2[2]]),
+                    np.min([aabb_1[3], aabb_2[3]]),
+                    np.max([aabb_1[4], aabb_2[4]]),
+                    np.min([aabb_1[5], aabb_2[5]]))
+        
+        return overlap_aabb
 
     def blend(self, 
               snowball_chunk: torch.Tensor, 
@@ -293,40 +300,101 @@ class MaskedBlending(BlendingModule):
     ) -> torch.Tensor:
         
         # Keyword arguments:
+        # snowball chunk/chunks are 5d tensors in 11zyx order. 
         # chunk_tile_ids: list of tile ids corresponding to each chunk
         # cell_box: cell AABB in output volume/absolute coordinates
         chunk_tile_ids = kwargs['chunk_tile_ids']
         cell_box = kwargs['cell_box']
 
-        # For every chunk, add chunk to blend list 
-        # if the chunk does not reside in a tile mask and inside 
-        # the mask's block list.  
+        # Iterate though chunks and each chunk and chunk 
         to_blend: list[torch.Tensor] = []
         for t_id, chunk in zip(chunk_tile_ids, chunks):
             for m_id in self.tile_to_mask_ids[t_id]:
                 m_aabb = self.masks[m_id]
                 blocked_tids = self.block_list[m_id]
 
-                # Add to blending if chunk does not fulfill masking condition. 
-                # Masking condition: 
-                # - Inside mask
-                #   Collision defined by overlapping intervals in all 3 dimensions.
-                #   Two intervals (A, B) collide if A_max is not <= B_min 
-                #   and A_min is not >= B_max.
-                # - Inside mask's block list
-                if not ((cell_box[1] > m_aabb[0] and cell_box[0] > m_aabb[1])
-                        and (cell_box[3] > m_aabb[2] and cell_box[2] < m_aabb[3])
-                        and (cell_box[5] > m_aabb[4] and cell_box[4] < m_aabb[5])
-                        and t_id in blocked_tids):
+                # Reject conditions
+                chunk_is_masked = \
+                   ((cell_box[1] > m_aabb[0] and cell_box[0] < m_aabb[1]) and \
+                   (cell_box[3] > m_aabb[2] and cell_box[2] < m_aabb[3]) and \
+                   (cell_box[5] > m_aabb[4] and cell_box[4] < m_aabb[5]))
+                chunk_is_blocked = t_id in blocked_tids
+
+                # If chunk is masked and blocked, 
+                # figure out how much of the chunk is masked and blocked. 
+                if chunk_is_masked and chunk_is_blocked:
+                    cell_aabb = np.array(cell_box).flatten()
+                    cell_inside_mask_aabb = self._get_overlap_aabb(m_aabb, cell_aabb)
+                    full_z_overlap = (cell_inside_mask_aabb[0] == cell_aabb[0] and 
+                                      cell_inside_mask_aabb[1] == cell_aabb[1])
+                    full_y_overlap = (cell_inside_mask_aabb[2] == cell_aabb[2] and
+                                      cell_inside_mask_aabb[3] == cell_aabb[3])
+                    full_x_overlap = (cell_inside_mask_aabb[4] == cell_aabb[4] and
+                                      cell_inside_mask_aabb[5] == cell_aabb[5])
+
+                    # If chunk is partially masked, 
+                    # pass along region of chunk that is not masked for blending. 
+                    # Otherwise, this conditional branch does not contribute to to_blend. 
+                    if not (full_z_overlap and full_y_overlap and full_x_overlap):
+                        chunk_mask = torch.ones(chunk.shape)
+                        partial_min_z_overlap = (cell_inside_mask_aabb[0] <= m_aabb[0] and 
+                                                 m_aabb[0] <= cell_inside_mask_aabb[1])
+                        partial_min_y_overlap = (cell_inside_mask_aabb[2] <= m_aabb[2] and
+                                                 m_aabb[2] <= cell_inside_mask_aabb[3])
+                        partial_min_x_overlap = (cell_inside_mask_aabb[4] <= m_aabb[4] and 
+                                                 m_aabb[4] <= cell_inside_mask_aabb[5])
+
+                        partial_max_z_overlap = (cell_inside_mask_aabb[0] <= m_aabb[1] and 
+                                                 m_aabb[1] <= cell_inside_mask_aabb[1])
+                        partial_max_y_overlap = (cell_inside_mask_aabb[2] <= m_aabb[3] and
+                                                 m_aabb[3] <= cell_inside_mask_aabb[3]) 
+                        partial_max_x_overlap = (cell_inside_mask_aabb[4] <= m_aabb[5] and 
+                                                 m_aabb[5] <= cell_inside_mask_aabb[5])
+                        
+                        # NOTE: Mask is mirrored depending on +/- partial overlap.
+                        if not full_z_overlap:
+                            if partial_min_z_overlap: 
+                                z_index = round(m_aabb[0] - cell_inside_mask_aabb[0])
+                                chunk_mask[:, :, z_index:, :, :] = 0
+
+                            if partial_max_z_overlap: 
+                                z_index = round(m_aabb[1] - cell_inside_mask_aabb[0])
+                                chunk_mask[:, :, :z_index, :, :] = 0
+
+                        if not full_y_overlap:
+                            if partial_min_y_overlap: 
+                                y_index = round(m_aabb[2] - cell_inside_mask_aabb[2])
+                                chunk_mask[:, :, :, y_index:, :] = 0
+
+                            if partial_max_y_overlap:
+                                y_index = round(m_aabb[3] - cell_inside_mask_aabb[2])
+                                chunk_mask[:, :, :, :y_index, :] = 0
+
+                        if not full_x_overlap:
+                            if partial_min_x_overlap: 
+                                x_index = round(m_aabb[4] - cell_inside_mask_aabb[4])
+                                chunk_mask[:, :, :, :, x_index:] = 0
+
+                            if partial_max_x_overlap:
+                                x_index = round(m_aabb[5] - cell_inside_mask_aabb[4])
+                                chunk_mask[:, :, :, :, :x_index] = 0
+
+                        chunk_mask = chunk_mask.to(device)
+                        updated_chunk = chunk_mask * chunk
+                        to_blend.append(updated_chunk)
+
+                else:
                     to_blend.append(chunk)
 
-        assert (
-            len(to_blend) > 0
-        ), f"Length of pass list is {len(to_blend)}, blending requires 1 or more chunks."
+        # All input chunks are masked
+        if len(to_blend) == 0:
+            return snowball_chunk
 
-        fused_chunk = torch.maximum(snowball_chunk.to(device), to_blend[0].to(device))
-        for c in to_blend[1:]:
-            c = c.to(device)
-            fused_chunk = torch.maximum(fused_chunk, c)
+        # Blend un-masked chunks
+        else:
+            fused_chunk = torch.maximum(snowball_chunk.to(device), to_blend[0].to(device))
+            for c in to_blend[1:]:
+                c = c.to(device)
+                fused_chunk = torch.maximum(fused_chunk, c)
 
-        return fused_chunk
+            return fused_chunk

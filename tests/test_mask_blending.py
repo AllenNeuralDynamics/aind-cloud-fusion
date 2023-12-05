@@ -169,6 +169,7 @@ class TestMaskedFusion(unittest.TestCase):
                                                     mask_percent=1.0)
 
         # Init and Run Fusion
+        worker_cells = []
         z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
             output_volume_size, self.CELL_SIZE
         )
