@@ -68,8 +68,14 @@ def create_starter_ymls(xml_path: str,
 
 
 if __name__ == '__main__':
-    # xml_path = str(glob.glob('../data/**/*.xml')[0])  
-    xml_path = str(glob.glob('../data/*.xml')[0])  
+    # xml_path = str(glob.glob('../data/**/*.xml')[0])
+    directory_to_search = "../data/"
+    xml_files = [os.path.join(root, file)
+                for root, dirs, files in os.walk(directory_to_search)
+                for file in files
+                if file.endswith((".xml"))]
+    xml_path = str(xml_files[0])
+
     output_path = str(os.path.abspath('../results'))
     
     print(f'{xml_path=}')
