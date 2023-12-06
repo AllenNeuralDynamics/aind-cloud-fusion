@@ -83,17 +83,6 @@ class Dataset:
         raise Dataset.WriteError("tile_transforms_zyx is read-only.")
 
     @property
-    def tile_shapes_zyx(self) -> dict[int, tuple[int, int, int]]:
-        """
-        Dict of tile_id -> tile shapes
-        """
-        raise NotImplementedError("Please implement in Dataset subclass.")
-
-    @tile_shapes_zyx.setter
-    def tile_shapes_zyx(self, value):
-        raise Dataset.WriteError("tile_transforms_zyx is read-only.")
-
-    @property
     def tile_resolution_zyx(self) -> tuple[float, float, float]:
         """
         Specifies absolute size of each voxel in tile volume.
