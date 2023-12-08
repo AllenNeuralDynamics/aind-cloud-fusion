@@ -3,6 +3,7 @@ Defines configuration file with unique fields per exaspim worker.
 """
 
 from collections import OrderedDict
+from datetime import datetime
 import glob
 import os
 import xmltodict
@@ -52,7 +53,8 @@ def create_starter_ymls(xml_path: str,
     if 'capsule' in parts: 
         parts.remove('capsule')
     input_s3_path = 's3://aind-open-data/' + parts[2] + '/' + parts[3] + '/'
-    output_s3_path_base = 's3://aind-open-data/' + parts[2] + '_full_res/'
+    datetime_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_s3_path_base = 's3://aind-open-data/' + parts[2] + f'_full_res_{datetime_str}/'
 
     # Figure out the exaspim channel
     channels = script_utils.get_unique_channels_for_dataset(input_s3_path)
