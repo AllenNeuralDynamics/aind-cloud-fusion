@@ -3,6 +3,7 @@ Defines configuration file with unique fields per dispim worker.
 """
 
 from collections import OrderedDict
+from datetime import datetime
 import glob
 import os
 
@@ -42,7 +43,9 @@ def create_starter_ymls(xml_path: str,
     ]["#text"]
     parts = parsed_path.split('/')
     input_s3_path = 's3://aind-open-data/' + parts[2] + '/' + parts[3] + '/'
-    output_s3_path_base = 's3://aind-open-data/' + parts[2] + '_full_res/'
+
+    datetime_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_s3_path_base = 's3://aind-open-data/' + parts[2] + f'_full_res_{datetime_str}/'
 
     # Write output yamls
     # Channel 405: 
