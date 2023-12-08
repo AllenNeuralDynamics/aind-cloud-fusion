@@ -150,20 +150,25 @@ def initalize_output_volume(
     Zarr thread-safe datastore initialized on OutputParameters.
     """
 
-    s3 = s3fs.S3FileSystem(
-        config_kwargs={
-            'max_pool_connections': 50,
-            's3': {
-                'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
-            },
-            'retries': {
-                'total_max_attempts': 100,
-                'mode': 'adaptive',
+    # Local execution
+    out_group = zarr.open_group(output_params.path, mode="w")
+    
+    # Cloud execuion
+    if output_params.path.startswith('s3'):
+        s3 = s3fs.S3FileSystem(
+            config_kwargs={
+                'max_pool_connections': 50,
+                's3': {
+                  'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
+                },
+                'retries': {
+                  'total_max_attempts': 100,
+                  'mode': 'adaptive',
+                }
             }
-        }
-    )
-    store = s3fs.S3Map(root=output_params.path, s3=s3)
-    out_group = zarr.group(store=store, overwrite=True)
+        )
+        store = s3fs.S3Map(root=output_params.path, s3=s3)
+        out_group = zarr.group(store=store, overwrite=True)
 
     path = "0"
     chunksize = output_params.chunksize
@@ -558,8 +563,13 @@ def color_cell(
         tile_contribution = torch.nn.functional.grid_sample(
             image_crop, tile_coords, padding_mode="zeros", mode="nearest"
         )
+        kwargs = {'chunk_tile_ids': [tile_id],
+                  'cell_box': cell_box}
         fused_cell = blend_module.blend(
-            [fused_cell, tile_contribution], device=device
+            fused_cell, 
+            [tile_contribution],
+            device, 
+            kwargs
         )
 
         del tile_coords
