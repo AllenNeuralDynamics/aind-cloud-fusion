@@ -74,7 +74,8 @@ class TestMaskedFusion(unittest.TestCase):
         self.BLENDING_MODULE = blend.MaskedBlending(tile_aabbs, 
                                                     self.CELL_SIZE, 
                                                     mask_axes=[0],
-                                                    mask_percent=1.0)
+                                                    mask_percent=1.0,
+                                                    cluster_eps=20)
 
         # Init and Run Fusion
         worker_cells = []
@@ -120,7 +121,8 @@ class TestMaskedFusion(unittest.TestCase):
         self.BLENDING_MODULE = blend.MaskedBlending(tile_aabbs, 
                                                     self.CELL_SIZE, 
                                                     mask_axes=[1],
-                                                    mask_percent=1.0)
+                                                    mask_percent=1.0, 
+                                                    cluster_eps=20)
 
         # Init and Run Fusion
         worker_cells = []
@@ -166,7 +168,8 @@ class TestMaskedFusion(unittest.TestCase):
         self.BLENDING_MODULE = blend.MaskedBlending(tile_aabbs, 
                                                     self.CELL_SIZE, 
                                                     mask_axes=[2],
-                                                    mask_percent=1.0)
+                                                    mask_percent=1.0, 
+                                                    cluster_eps=20)
 
         # Init and Run Fusion
         worker_cells = []

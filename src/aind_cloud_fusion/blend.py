@@ -77,11 +77,13 @@ class MaskedBlending(BlendingModule):
     IMPORTANT: 
     Assumes tiles are arranged in a regular grid-- no significant warping of the image volume. 
     """
-    
+    CLUSTER_EPS = 500  # Size of bucket to bin tile_aabb corners to form tile_layout. 
+
     def __init__(self, tile_aabbs: dict[int, geometry.AABB],
                        cell_size: tuple[int, int, int],
                        mask_axes: list[int], 
-                       mask_percent: float = 0.9):
+                       mask_percent: float = 0.9,
+                       cluster_eps: int = 500):
         """
         tile_aabbs: Dict of tile_id -> AABB
         cell_size: zyx cell size, application input
@@ -101,6 +103,7 @@ class MaskedBlending(BlendingModule):
         self.tile_aabbs = tile_aabbs
         self.cell_size = cell_size
         self.mask_percent = mask_percent
+        MaskedBlending.CLUSTER_EPS = cluster_eps
         
         # Create tile layout
         # Tile layout is a higher-level discrete representation 
@@ -228,12 +231,11 @@ class MaskedBlending(BlendingModule):
         # [[1, 2, 3], [10], [50]]
 
         clusters = []
-        EPS = 20   # Bin based on 20-pixel interval
         buffer_sorted = sorted(buffer)
         curr_point = buffer_sorted[0]
         curr_cluster = [curr_point]
         for point in buffer_sorted[1:]:
-            if point <= curr_point + EPS:
+            if point <= curr_point + MaskedBlending.CLUSTER_EPS:
                 curr_cluster.append(point)
             else:
                 clusters.append(curr_cluster)
