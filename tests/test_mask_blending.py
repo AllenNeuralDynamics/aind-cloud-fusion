@@ -12,12 +12,12 @@ import aind_cloud_fusion.fusion as fusion
 import aind_cloud_fusion.io as io
 import aind_cloud_fusion.geometry as geometry
 from test_dataset import (
-    generate_x_dataset,
-    generate_y_dataset,
-    generate_z_dataset,
+    generate_masked_x_dataset,
+    generate_masked_y_dataset,
+    generate_masked_z_dataset,
 )
 
-class TestFusion(unittest.TestCase):
+class TestMaskedFusion(unittest.TestCase):
     def setUp(self):
         # Initalize Application Objects
         # Application Object: Dataset
@@ -43,7 +43,7 @@ class TestFusion(unittest.TestCase):
         self.POST_REG_TFMS: list[geometry.Affine] = []
 
         # Application Object: BLENDING_MODULE
-        self.BLENDING_MODULE = blend.MaxProjection()
+        # Init inside each test along with Dataset.
 
     def _read_zarr_zyx_volume(self, zarr_path: str):
         output_path = zarr_path + "/0"
@@ -54,7 +54,7 @@ class TestFusion(unittest.TestCase):
 
     def test_fusion_in_z_axis(self):
         # Generate Dataset
-        ground_truth, DATASET = generate_z_dataset()
+        ground_truth, DATASET = generate_masked_z_dataset()
 
         # Generate Output Parameters
         zarr_path = str(
@@ -66,11 +66,19 @@ class TestFusion(unittest.TestCase):
             resolution_zyx=(1.0, 1.0, 1.0),
         )
 
+        # Generate Blending
+        _, _, _, tile_aabbs, output_volume_size, _ = \
+        fusion.initialize_fusion(DATASET,
+                                 self.POST_REG_TFMS,
+                                 OUTPUT_PARAMS)
+        self.BLENDING_MODULE = blend.MaskedBlending(tile_aabbs, 
+                                                    self.CELL_SIZE, 
+                                                    mask_axes=[0],
+                                                    mask_percent=1.0,
+                                                    cluster_eps=20)
+
         # Init and Run Fusion
         worker_cells = []
-        _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(
-            DATASET, self.POST_REG_TFMS, OUTPUT_PARAMS
-        )
         z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
             output_volume_size, self.CELL_SIZE
         )
@@ -93,7 +101,7 @@ class TestFusion(unittest.TestCase):
 
     def test_fusion_in_y_axis(self):
         # Generate Dataset
-        ground_truth, DATASET = generate_y_dataset()
+        ground_truth, DATASET = generate_masked_y_dataset()
 
         # Generate Output Parameters
         zarr_path = str(
@@ -105,11 +113,19 @@ class TestFusion(unittest.TestCase):
             resolution_zyx=(1.0, 1.0, 1.0),
         )
 
+        # Generate Blending
+        _, _, _, tile_aabbs, output_volume_size, _ = \
+        fusion.initialize_fusion(DATASET,
+                                 self.POST_REG_TFMS,
+                                 OUTPUT_PARAMS)
+        self.BLENDING_MODULE = blend.MaskedBlending(tile_aabbs, 
+                                                    self.CELL_SIZE, 
+                                                    mask_axes=[1],
+                                                    mask_percent=1.0, 
+                                                    cluster_eps=20)
+
         # Init and Run Fusion
         worker_cells = []
-        _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(
-            DATASET, self.POST_REG_TFMS, OUTPUT_PARAMS
-        )
         z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
             output_volume_size, self.CELL_SIZE
         )
@@ -132,7 +148,7 @@ class TestFusion(unittest.TestCase):
 
     def test_fusion_in_x_axis(self):
         # Generate Dataset
-        ground_truth, DATASET = generate_x_dataset()
+        ground_truth, DATASET = generate_masked_x_dataset()
 
         # Generate Output Parameters
         zarr_path = str(
@@ -144,11 +160,19 @@ class TestFusion(unittest.TestCase):
             resolution_zyx=(1.0, 1.0, 1.0),
         )
 
+        # Generate Blending
+        _, _, _, tile_aabbs, output_volume_size, _ = \
+        fusion.initialize_fusion(DATASET,
+                                 self.POST_REG_TFMS,
+                                 OUTPUT_PARAMS)
+        self.BLENDING_MODULE = blend.MaskedBlending(tile_aabbs, 
+                                                    self.CELL_SIZE, 
+                                                    mask_axes=[2],
+                                                    mask_percent=1.0, 
+                                                    cluster_eps=20)
+
         # Init and Run Fusion
         worker_cells = []
-        _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(
-            DATASET, self.POST_REG_TFMS, OUTPUT_PARAMS
-        )
         z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
             output_volume_size, self.CELL_SIZE
         )
@@ -177,7 +201,7 @@ class TestFusion(unittest.TestCase):
 if __name__ == "__main__":
     # unittest.main()
     suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(TestFusion))
+    suite.addTest(unittest.makeSuite(TestMaskedFusion))
 
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

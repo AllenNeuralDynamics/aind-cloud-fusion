@@ -145,3 +145,96 @@ def generate_x_dataset() -> tuple[np.ndarray, io.Dataset]:
     )
 
     return ground_truth, dataset
+
+
+def generate_masked_z_dataset():
+    img = Image.open("tests/nueral_dynamics_logo.jpeg").convert("L")
+    img = np.array(img)
+    x, y = img.shape
+    stack_size = 400
+
+    ground_truth = np.zeros((x, y, stack_size))
+    for i in range(stack_size):
+        ground_truth[:, :, i] = img
+    tile_1_zyx = ground_truth[: 3 * (x // 4), :, :].copy()
+    tile_2_zyx = ground_truth[(x // 4) :, :, :].copy()
+
+    # Modify some signal in the overlap region to test masked blending,
+    # Wash out 2nd image overlap.
+    s = tile_1_zyx.shape[0]  # Split axis.
+    tile_2_zyx[0 : (s // 2), :, :] = 255
+
+    # Registration matrix is (identity, translation = to tile cut).
+    registration_zyx = np.array(
+        [[1, 0, 0, (x // 4)], [0, 1, 0, 0], [0, 0, 1, 0]]  # Split axis
+    )
+
+    input_resolution_zyx = (1.0, 1.0, 1.0)
+
+    dataset = TestDataset(
+        tile_1_zyx, tile_2_zyx, registration_zyx, input_resolution_zyx
+    )
+
+    return ground_truth, dataset
+
+def generate_masked_y_dataset():
+    img = Image.open("tests/nueral_dynamics_logo.jpeg").convert("L")
+    img = np.array(img)
+    x, y = img.shape
+    stack_size = 400
+
+    ground_truth = np.zeros((stack_size, x, y))
+    for i in range(stack_size):
+        ground_truth[i, :, :] = img
+    tile_1_zyx = ground_truth[:, : 3 * (x // 4), :].copy()
+    tile_2_zyx = ground_truth[:, (x // 4) :, :].copy()
+
+    # Modify some signal in the overlap region to test masked blending,
+    # Wash out 2nd image overlap.
+    s = tile_1_zyx.shape[1]  # Split axis.
+    tile_2_zyx[:, 0 : (s // 2), :] = 255  
+
+    # Registration matrix is (identity, translation = to tile cut).
+    registration_zyx = np.array(
+        [[1, 0, 0, 0], [0, 1, 0, (x // 4)], [0, 0, 1, 0]]  # Split axis
+    )
+
+    input_resolution_zyx = (1.0, 1.0, 1.0)
+
+    dataset = TestDataset(
+        tile_1_zyx, tile_2_zyx, registration_zyx, input_resolution_zyx
+    )
+
+    return ground_truth, dataset
+
+
+def generate_masked_x_dataset():
+    img = Image.open("tests/nueral_dynamics_logo.jpeg").convert("L")
+    img = np.array(img)
+    x, y = img.shape
+    stack_size = 400
+
+    ground_truth = np.zeros((x, stack_size, y))
+
+    for i in range(stack_size):
+        ground_truth[:, i, :] = img
+    tile_1_zyx = ground_truth[:, :, : 3 * (x // 4)].copy()
+    tile_2_zyx = ground_truth[:, :, (x // 4) :].copy()
+
+    # Modify some signal in the overlap region to test masked blending,
+    # Wash out 2nd image overlap.
+    s = tile_1_zyx.shape[2]  # Split axis.
+    tile_2_zyx[:, :, 0 : (s // 2)] = 255
+
+    # Registration matrix is (identity, translation = to tile cut).
+    registration_zyx = np.array(
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, (x // 4)]]
+    )  # Split Axis
+
+    input_resolution_zyx = (1.0, 1.0, 1.0)
+
+    dataset = TestDataset(
+        tile_1_zyx, tile_2_zyx, registration_zyx, input_resolution_zyx
+    )
+
+    return ground_truth, dataset
