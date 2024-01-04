@@ -211,7 +211,12 @@ if __name__ == '__main__':
     print(f'{num_cpus=}')
     torch.set_num_threads(num_cpus)
 
-    yml_path = str(glob.glob('../data/*.yml')[0])
+    directory_to_search = "../data/"
+    yml_files = [os.path.join(root, file)
+                for root, dirs, files in os.walk(directory_to_search)
+                for file in files
+                if file.endswith((".yml") and not file.startswith('s3'))]
+    yml_path = str(yml_files[0])
     
     # xml_path = str(glob.glob('../data/**/*.xml')[0])
     directory_to_search = "../data/"
