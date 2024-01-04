@@ -215,7 +215,7 @@ if __name__ == '__main__':
     yml_files = [os.path.join(root, file)
                 for root, dirs, files in os.walk(directory_to_search)
                 for file in files
-                if file.endswith((".yml") and not file.startswith('s3'))]
+                if file.endswith(".yml") and not file.startswith('s3')]
     yml_path = str(yml_files[0])
     
     # xml_path = str(glob.glob('../data/**/*.xml')[0])
