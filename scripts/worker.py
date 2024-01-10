@@ -218,13 +218,14 @@ if __name__ == '__main__':
                 if file.endswith(".yml") and not file.startswith('s3')]
     yml_path = str(yml_files[0])
     
-    # xml_path = str(glob.glob('../data/**/*.xml')[0])
-    directory_to_search = "../data/"
-    xml_files = [os.path.join(root, file)
-                for root, dirs, files in os.walk(directory_to_search)
-                for file in files
-                if file.endswith((".xml"))]
-    xml_path = str(xml_files[0])
+    xml_paths = glob.glob('../data/**/*.xml')
+    if len(xml_paths) == 0:
+        directory_to_search = "../data/"
+        xml_paths = [os.path.join(root, file)
+                    for root, dirs, files in os.walk(directory_to_search)
+                    for file in files
+                    if file.endswith((".xml"))]
+    xml_path = str(xml_paths[0])
 
     output_path = str(os.path.abspath('../results'))
 
