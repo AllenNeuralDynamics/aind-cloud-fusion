@@ -3,6 +3,8 @@ import os
 import logging
 import time
 
+import dask
+import dask.array as da
 import numpy as np
 import torch
 import s3fs
@@ -241,132 +243,38 @@ def run_fusion(
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
 
-    process_args: list[dict] = []
-    num_cells = len(runtime_params.worker_cells)
+    start_run = time.time()
+    client = Client(LocalCluster(n_workers=pool_size, threads_per_worker=1, processes=True))
+    
+    # Commenting out, dask may handle resources better
+    # os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    
+    delayed_color_cells = []
     for cell_num, cell in enumerate(runtime_params.worker_cells):
         z, y, x = cell
-        process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
-
-    # SINGLE-PROCESS EXECUTION
-    if runtime_params.pool_size == 1: 
-        start_run = time.time()
-
-        # Run fusion: Simply iterate through all work
-        for p_args in process_args:
-            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
-            start_time = time.time()
-            color_cell(tile_arrays,
-                    tile_transforms,
-                    tile_sizes_zyx,
-                    tile_aabbs,
-                    output_volume,
-                    output_volume_origin,
-                    cell_size,
-                    blend_module,
-                    p_args["z"],
-                    p_args["y"],
-                    p_args["x"],
-                    runtime_params.devices[0],
-                    LOGGER,
+        delayed_color_cells.append(
+            color_cell(
+                tile_arrays,
+                tile_transforms,
+                tile_sizes_zyx,
+                tile_aabbs,
+                output_volume,
+                output_volume_origin,
+                cell_size,
+                blend_module,
+                z,
+                y,
+                x,
+                torch.device("cpu"),  # Hardcoding CPU cluster
+                LOGGER
             )
-            LOGGER.info(
-                f"Finished Cell {p_args['cell_num']}/{num_cells}: {time.time() - start_time}"
-            )
-        LOGGER.info(f"Runtime: {time.time() - start_run}")
+        )
 
-    # MULTI-PROCESS EXECUTION
-    else:
-        # Important for prevent running out of resources
-        os.environ["OPENBLAS_NUM_THREADS"] = "1"
-
-        # Run Fusion: Fill work queue (active processes) with inital tasks
-        # Task-specific info includes process_args and device.
-        start_run = time.time()
-        active_processes: list[
-            tuple
-        ] = []  # (process, device, cell_num, start_time)
-        for i in range(runtime_params.pool_size):
-            p_args = process_args.pop(0)
-            p = torch.multiprocessing.Process(
-                target=color_cell,
-                args=(
-                    tile_arrays,
-                    tile_transforms,
-                    tile_sizes_zyx,
-                    tile_aabbs,
-                    output_volume,
-                    output_volume_origin,
-                    cell_size,
-                    blend_module,
-                    p_args["z"],
-                    p_args["y"],
-                    p_args["x"],
-                    runtime_params.devices[i % len(runtime_params.devices)],
-                    LOGGER,
-                ),
-            )
-            active_processes.append(
-                (
-                    p,
-                    runtime_params.devices[i % len(runtime_params.devices)],
-                    p_args["cell_num"],
-                    time.time(),
-                )
-            )
-            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
-            p.start()
-
-        # Run Fusion: Exhaust all the tasks
-        # Tasks all implictly defined in process_args buffer
-        while len(active_processes) != 0:
-            tmp = []
-            for p, device, cell_num, start_time in active_processes:
-                p.join(
-                    timeout=0
-                )  # timeout indicates do not wait until the process is explicitly finished
-
-                if p.is_alive():
-                    tmp.append((p, device, cell_num, start_time))
-                else:
-                    p.close()
-                    del p 
-                    LOGGER.info(
-                        f"Finished Cell {cell_num}/{num_cells}: {time.time() - start_time}"
-                    )
-
-                    if len(process_args) != 0:
-                        p_args = process_args.pop(0)
-                        new_p = torch.multiprocessing.Process(
-                            target=color_cell,
-                            args=(
-                                tile_arrays,
-                                tile_transforms,
-                                tile_sizes_zyx,
-                                tile_aabbs,
-                                output_volume,
-                                output_volume_origin,
-                                cell_size,
-                                blend_module,
-                                p_args["z"],
-                                p_args["y"],
-                                p_args["x"],
-                                device,
-                                LOGGER,
-                            ),
-                        )
-                        tmp.append(
-                            (new_p, device, p_args["cell_num"], time.time())
-                        )
-                        LOGGER.info(
-                            f'Starting Cell {p_args["cell_num"]}/{num_cells}'
-                        )
-                        new_p.start()
-
-                active_processes = tmp
-
-        LOGGER.info(f"Runtime: {time.time() - start_run}")
+    da.compute(*delayed_color_cells)
+    LOGGER.info(f"Runtime: {time.time() - start_run}")
 
 
+@dask.delayed
 def color_cell(
     tile_arrays: dict[int, io.LazyArray],
     tile_transforms: dict[int, list[geometry.Transform]],
