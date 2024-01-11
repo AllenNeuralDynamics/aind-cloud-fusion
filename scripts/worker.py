@@ -11,7 +11,6 @@ from pathlib import Path
 import yaml
 
 import torch
-import multiprocessing as mp
 import numpy as np
 
 import aind_cloud_fusion.blend as blend
@@ -50,7 +49,7 @@ def run_exaspim_worker(yml_path: str,
     RUNTIME_PARAMS = io.RuntimeParameters(
         use_gpus=False,
         devices=[torch.device("cpu")],
-        pool_size=16, 
+        pool_size=int(os.environ.get("CO_CPUS", 1)),   # Retrieve CO cpu env var 
         worker_cells=worker_cells
     )
     # Application Parameter: CELL_SIZE
@@ -122,7 +121,7 @@ def run_dispim_worker(yml_path: str,
     RUNTIME_PARAMS = io.RuntimeParameters(
         use_gpus=False,
         devices=[torch.device("cpu")],
-        pool_size=16
+        pool_size=int(os.environ.get("CO_CPUS", 1))   # Retrieve CO cpu env var
     )
 
     # Application Parameter: CELL_SIZE
@@ -203,14 +202,6 @@ def execute_job(yml_path: str,
                           output_path)
 
 if __name__ == '__main__':
-    # Special Initalization for CO: 
-    torch.multiprocessing.set_start_method('forkserver', force=True)
-    mp.util.abstract_sockets_supported = False
-
-    num_cpus = int(os.environ.get("CO_CPUS", 16))  # retrieve env var, defaults to 16.
-    print(f'{num_cpus=}')
-    torch.set_num_threads(num_cpus)
-
     directory_to_search = "../data/"
     yml_files = [os.path.join(root, file)
                 for root, dirs, files in os.walk(directory_to_search)
