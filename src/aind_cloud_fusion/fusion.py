@@ -5,6 +5,7 @@ import time
 
 import dask
 import dask.array as da
+from dask.distributed import Client, LocalCluster, performance_report
 import numpy as np
 import torch
 import s3fs
@@ -244,33 +245,34 @@ def run_fusion(
     LOGGER.info(f"{output_volume_size=}")
 
     start_run = time.time()
-    client = Client(LocalCluster(n_workers=pool_size, threads_per_worker=1, processes=True))
+    client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
     
     # Commenting out, dask may handle resources better
     # os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    
-    delayed_color_cells = []
-    for cell_num, cell in enumerate(runtime_params.worker_cells):
-        z, y, x = cell
-        delayed_color_cells.append(
-            color_cell(
-                tile_arrays,
-                tile_transforms,
-                tile_sizes_zyx,
-                tile_aabbs,
-                output_volume,
-                output_volume_origin,
-                cell_size,
-                blend_module,
-                z,
-                y,
-                x,
-                torch.device("cpu"),  # Hardcoding CPU cluster
-                LOGGER
-            )
-        )
 
-    da.compute(*delayed_color_cells)
+    with performance_report(filename='/results/dask-report.html'):
+        delayed_color_cells = []
+        for cell_num, cell in enumerate(runtime_params.worker_cells):
+            z, y, x = cell
+            delayed_color_cells.append(
+                color_cell(
+                    tile_arrays,
+                    tile_transforms,
+                    tile_sizes_zyx,
+                    tile_aabbs,
+                    output_volume,
+                    output_volume_origin,
+                    cell_size,
+                    blend_module,
+                    z,
+                    y,
+                    x,
+                    torch.device("cpu"),  # Hardcoding CPU cluster
+                    LOGGER
+                )
+            )
+        da.compute(*delayed_color_cells)
+
     LOGGER.info(f"Runtime: {time.time() - start_run}")
 
 
