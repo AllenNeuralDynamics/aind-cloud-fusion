@@ -245,40 +245,38 @@ def run_fusion(
     LOGGER.info(f"{output_volume_size=}")
 
     start_run = time.time()
-    # client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
-    # ^Temporarily commenting out
+    client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
 
     num_cells = len(runtime_params.worker_cells)
-    LOGGER.info(f'Coloring {num_cells}')
+    LOGGER.info(f'Coloring {num_cells} cells')
     
-    with performance_report(filename='/results/dask-report.html'):
-        delayed_color_cells = []
-        for cell_num, cell in enumerate(runtime_params.worker_cells):
-            z, y, x = cell
-            delayed_color_cells.append(
-                color_cell(
-                    tile_arrays,
-                    tile_transforms,
-                    tile_sizes_zyx,
-                    tile_aabbs,
-                    output_volume,
-                    output_volume_origin,
-                    cell_size,
-                    blend_module,
-                    z,
-                    y,
-                    x,
-                    torch.device("cpu"),  # Hardcoding CPU cluster
-                    LOGGER
-                )
+    delayed_color_cells = []
+    for cell_num, cell in enumerate(runtime_params.worker_cells):
+        z, y, x = cell
+        delayed_color_cells.append(
+            color_cell(
+                tile_arrays,
+                tile_transforms,
+                tile_sizes_zyx,
+                tile_aabbs,
+                output_volume,
+                output_volume_origin,
+                cell_size,
+                blend_module,
+                z,
+                y,
+                x,
+                torch.device("cpu"),  # Hardcoding CPU cluster
+                LOGGER
             )
-            # Batching
-            if len(delayed_color_cells) == 5000: 
-                LOGGER.info('Calculating Task Graph...')
-                da.compute(*delayed_color_cells)
-                delayed_color_cells = []
-                LOGGER.info(f'Finished up to {cell_num}/{num_cells}')
-        
+        )
+        # Batching
+        if len(delayed_color_cells) == 5000: 
+            LOGGER.info('Calculating Task Graph...')
+            da.compute(*delayed_color_cells)
+            delayed_color_cells = []
+            LOGGER.info(f'Finished up to {cell_num}/{num_cells}')
+    
         # Compute remaining cells
         da.compute(*delayed_color_cells)
     LOGGER.info(f"Runtime: {time.time() - start_run}")
