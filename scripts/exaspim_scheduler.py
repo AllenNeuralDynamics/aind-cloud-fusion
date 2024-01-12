@@ -6,6 +6,7 @@ from collections import OrderedDict
 from datetime import datetime
 import glob
 import os
+import random
 import xmltodict
 import yaml
 
@@ -77,7 +78,7 @@ def create_starter_ymls(xml_path: str,
     # Not required here
 
     # Application Parameter: CELL_SIZE
-    CELL_SIZE = [256, 256, 256]
+    CELL_SIZE = [128, 128, 128]
 
     # Application Parameter: POST_REG_TFMS
     POST_REG_TFMS: list[geometry.Affine] = []
@@ -111,8 +112,8 @@ def create_starter_ymls(xml_path: str,
     print(f'Each worker assigned {n} cells')
     
     # Generate shuffled list of [0 -> num_workers]
-    worker_id = list(range(0, num_workers))
-    shuffled_ids = sorted(nums, key=lambda x: random.random())
+    worker_ids = list(range(0, num_workers))
+    shuffled_ids = sorted(worker_ids, key=lambda x: random.random())
 
     for i, worker_id in enumerate(shuffled_ids):
         print(f'Generating Worker {i} Yaml')
