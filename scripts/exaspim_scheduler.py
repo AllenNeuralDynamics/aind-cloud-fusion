@@ -109,7 +109,12 @@ def create_starter_ymls(xml_path: str,
     # ceil(50 / 6) -> 9
     n = int(np.ceil(len(cell_coords) / num_workers))
     print(f'Each worker assigned {n} cells')
-    for i in range(num_workers):
+    
+    # Generate shuffled list of [0 -> num_workers]
+    worker_id = list(range(0, num_workers))
+    shuffled_ids = sorted(nums, key=lambda x: random.random())
+
+    for i, worker_id in enumerate(shuffled_ids):
         print(f'Generating Worker {i} Yaml')
         start = i * n 
         end = (i + 1) * n
@@ -123,7 +128,7 @@ def create_starter_ymls(xml_path: str,
 
         yaml_path = (
             Path(output_path)
-            / f"worker_config_{i}.yml"
+            / f"worker_config_{worker_id}.yml"
         )
         io.write_config_yaml(
             yaml_path=yaml_path, yaml_data=configs

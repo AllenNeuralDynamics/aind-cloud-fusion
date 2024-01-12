@@ -245,11 +245,12 @@ def run_fusion(
     LOGGER.info(f"{output_volume_size=}")
 
     start_run = time.time()
-    client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
-    
-    # Commenting out, dask may handle resources better
-    # os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    # client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
+    # ^Temporarily commenting out
 
+    num_cells = len(runtime_params.worker_cells)
+    LOGGER.info(f'Coloring {num_cells}')
+    
     with performance_report(filename='/results/dask-report.html'):
         delayed_color_cells = []
         for cell_num, cell in enumerate(runtime_params.worker_cells):
@@ -271,8 +272,15 @@ def run_fusion(
                     LOGGER
                 )
             )
+            # Batching
+            if len(delayed_color_cells) == 5000: 
+                LOGGER.info('Calculating Task Graph...')
+                da.compute(*delayed_color_cells)
+                delayed_color_cells = []
+                LOGGER.info(f'Finished up to {cell_num}/{num_cells}')
+        
+        # Compute remaining cells
         da.compute(*delayed_color_cells)
-
     LOGGER.info(f"Runtime: {time.time() - start_run}")
 
 
@@ -498,3 +506,4 @@ def color_cell(
     output_volume[output_slice] = output_chunk
 
     del fused_cell
+    del output_chunk

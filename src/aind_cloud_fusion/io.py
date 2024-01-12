@@ -8,6 +8,7 @@ from pathlib import Path
 import boto3
 import dask.array as da
 import numpy as np
+from numcodecs import Blosc
 import re
 import torch
 import xmltodict
@@ -383,7 +384,7 @@ class OutputParameters:
     resolution_zyx: tuple[float, float, float]
     dtype: np.dtype = np.uint16
     dimension_separator: str = "/"
-    compressor: str = None
+    compressor = Blosc(cname='zstd', clevel=1, shuffle=Blosc.SHUFFLE)
 
 
 class RuntimeParameters:
