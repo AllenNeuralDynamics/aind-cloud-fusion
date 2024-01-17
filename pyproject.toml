@@ -25,7 +25,6 @@ dependencies = [
     'dask==2023.10.0',
     'Pillow==10.1.0', 
     'boto3',
-    'torch==2.1.2+cpu'
 ]
 
 [project.optional-dependencies]
