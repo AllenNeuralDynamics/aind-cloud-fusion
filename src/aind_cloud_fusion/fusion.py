@@ -247,6 +247,7 @@ def run_fusion(
     LOGGER.info(f"{output_volume_size=}")
 
     start_run = time.time()
+    batch_start = start_run
     client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
 
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
