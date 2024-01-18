@@ -252,7 +252,9 @@ def run_fusion(
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
     num_cells = len(runtime_params.worker_cells)
-    LOGGER.info(f'Coloring {num_cells}')
+    batch_size = 1000
+    LOGGER.info(f'Coloring {num_cells} cells')
+    LOGGER.info(f'Batch Size: {batch_size}')
     
     delayed_color_cells = []
     for cell_num, cell in enumerate(runtime_params.worker_cells):
@@ -275,15 +277,26 @@ def run_fusion(
             )
         )
         # Batching
-        if len(delayed_color_cells) == 5000: 
-            LOGGER.info(f'Calculating {cell_num}/{num_cells}...')
+        if len(delayed_color_cells) == batch_size: 
+            LOGGER.info(f'Calculating up to {cell_num}/{num_cells}...')
             da.compute(*delayed_color_cells)
+
+            # Clear memory for runtime stability
             delayed_color_cells = []
-            LOGGER.info(f'Finished up to {cell_num}/{num_cells}')
+            client.restart()
+            
+            LOGGER.info(f'Finished up to {cell_num}/{num_cells}. Batch time: {time.time() - batch_start}')
+            batch_start = time.time()
     
     # Compute remaining cells
+    LOGGER.info(f'Calculating up to {num_cells}/{num_cells}...')
     da.compute(*delayed_color_cells)
+    delayed_color_cells = []
+    LOGGER.info(f'Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}')
+    batch_start = time.time()
+    
     LOGGER.info(f"Runtime: {time.time() - start_run}")
+
 
 
 @dask.delayed
