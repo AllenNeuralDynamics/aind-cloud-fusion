@@ -77,7 +77,7 @@ def create_starter_ymls(xml_path: str,
     # Not required here
 
     # Application Parameter: CELL_SIZE
-    CELL_SIZE = [256, 256, 256]
+    CELL_SIZE = [128, 128, 128]
 
     # Application Parameter: POST_REG_TFMS
     POST_REG_TFMS: list[geometry.Affine] = []
