@@ -14,6 +14,7 @@ import s3fs
 import torch
 import xmltodict
 import yaml
+import zarr
 
 import aind_cloud_fusion.geometry as geometry
 
