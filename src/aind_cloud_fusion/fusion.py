@@ -1,4 +1,5 @@
 """Core fusion algorithm."""
+import gc
 import os
 import logging
 import time
@@ -163,6 +164,7 @@ def initalize_output_volume(
                 'max_pool_connections': 50,
                 's3': {
                   'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
+                  'max_concurrent_requests': 20  # Increased from 10 -> 20.
                 },
                 'retries': {
                   'total_max_attempts': 100,
@@ -248,6 +250,10 @@ def run_fusion(
     # client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
     # ^Temporarily commenting out
 
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    # Adding in to see if memory issues addressed. 
+    # Could potentially be dramatically slower. 
+    
     num_cells = len(runtime_params.worker_cells)
     LOGGER.info(f'Coloring {num_cells}')
     
@@ -274,7 +280,7 @@ def run_fusion(
             )
             # Batching
             if len(delayed_color_cells) == 5000: 
-                LOGGER.info('Calculating Task Graph...')
+                LOGGER.info(f'Calculating {cell_num}/{num_cells}...')
                 da.compute(*delayed_color_cells)
                 delayed_color_cells = []
                 LOGGER.info(f'Finished up to {cell_num}/{num_cells}')
@@ -479,7 +485,7 @@ def color_cell(
 
         # Interpolate and Fuse
         tile_contribution = torch.nn.functional.grid_sample(
-            image_crop, tile_coords, padding_mode="zeros", mode="nearest"
+            image_crop, tile_coords, padding_mode="zeros", mode="nearest", align_corners=False
         )
         kwargs = {'chunk_tile_ids': [tile_id],
                   'cell_box': cell_box}
@@ -507,3 +513,4 @@ def color_cell(
 
     del fused_cell
     del output_chunk
+
