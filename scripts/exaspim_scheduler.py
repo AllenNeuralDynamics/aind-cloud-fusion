@@ -9,6 +9,7 @@ import os
 import xmltodict
 import yaml
 
+import random
 import numpy as np
 from pathlib import Path
 import torch
@@ -111,8 +112,8 @@ def create_starter_ymls(xml_path: str,
     print(f'Each worker assigned {n} cells')
     
     # Generate shuffled list of [0 -> num_workers]
-    worker_id = list(range(0, num_workers))
-    shuffled_ids = sorted(nums, key=lambda x: random.random())
+    worker_ids = list(range(0, num_workers))
+    shuffled_ids = sorted(worker_ids, key=lambda x: random.random())
 
     for i, worker_id in enumerate(shuffled_ids):
         print(f'Generating Worker {i} Yaml')
