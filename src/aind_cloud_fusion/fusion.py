@@ -39,7 +39,7 @@ def initialize_fusion(
     output_volume_origin: Location of output volume
     """
 
-    tile_arrays: dict[int, io.LazyArray] = dataset.tile_volumes_zyx
+    tile_arrays: dict[int, io.LazyArray] = dataset.tile_volumes_tczyx
 
     tile_transforms: dict[
         int, list[geometry.Transform]
@@ -72,7 +72,7 @@ def initialize_fusion(
     tile_boundary_point_cloud_zyx = []
 
     for tile_id, tile_arr in tile_arrays.items():
-        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape
+        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape[2:]
         tile_boundaries = torch.Tensor(
             [
                 [0.0, 0.0, 0.0],
@@ -452,6 +452,8 @@ def color_cell(
 
         # Prep inputs to interpolation
         image_crop_slice = (
+            0, 
+            0, 
             slice(crop_min_z, crop_max_z),
             slice(crop_min_y, crop_max_y),
             slice(crop_min_x, crop_max_x),
