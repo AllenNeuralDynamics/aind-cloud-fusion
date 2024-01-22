@@ -216,6 +216,7 @@ def get_cell_count_zyx(
 
 
 def run_fusion(
+    # client,    # Uncomment for testing in jupyterlab
     dataset: io.Dataset,
     output_params: io.OutputParameters,
     runtime_params: io.RuntimeParameters,
@@ -521,8 +522,20 @@ def color_cell(
     )
     # Convert from float32 -> canonical uint16
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
-    output_volume[output_slice] = output_chunk
 
+    # output_volume[output_slice] = output_chunk
+    # Replace zarr write with dask's write b/c zarr's write has a hidden 'list objects' side effect. 
+    
+    output_chunk = dask.array.from_array(output_chunk)
+    da.store(
+        output_chunk,
+        output_volume,
+        regions=output_slice,
+        lock=False,
+        compute=True,
+        return_stored=False,
+    )
+    
     del fused_cell
     del output_chunk
 
