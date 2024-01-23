@@ -137,7 +137,7 @@ def initialize_fusion(
     )
 
 
-def initalize_output_volume(
+def initialize_output_volume(
     output_params: io.OutputParameters,
     output_volume_size: tuple[int, int, int],
 ) -> zarr.core.Array:
@@ -153,53 +153,54 @@ def initalize_output_volume(
     -------
     Zarr thread-safe datastore initialized on OutputParameters.
     """
-
-    # Local execution
-    out_group = zarr.open_group(output_params.path, mode="w")
     
-    # Cloud execuion
-    if output_params.path.startswith('s3'):
-        s3 = s3fs.S3FileSystem(
-            config_kwargs={
-                'max_pool_connections': 50,
-                's3': {
-                  'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
-                  'max_concurrent_requests': 20  # Increased from 10 -> 20.
-                },
-                'retries': {
-                  'total_max_attempts': 100,
-                  'mode': 'adaptive',
-                }
+    # Default s3 cloud execution
+    s3 = s3fs.S3FileSystem(
+        config_kwargs={
+            'max_pool_connections': 50,
+            's3': {
+              'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
+              'max_concurrent_requests': 20  # Increased from 10 -> 20.
+            },
+            'retries': {
+              'total_max_attempts': 100,
+              'mode': 'adaptive',
             }
-        )
-        store = s3fs.S3Map(root=output_params.path, s3=s3)
-        out_group = zarr.group(store=store, overwrite=True)
-
-    path = "0"
-    chunksize = output_params.chunksize
-    datatype = output_params.dtype
-    dimension_separator = "/"
-    compressor = output_params.compressor
-    global output_volume
-    output_volume = out_group.create_dataset(
-        path,
-        shape=(
-            1,
-            1,
-            output_volume_size[0],
-            output_volume_size[1],
-            output_volume_size[2],
-        ),
-        chunks=chunksize,
-        dtype=datatype,
-        compressor=compressor,
-        dimension_separator=dimension_separator,
-        overwrite=True,
-        fill_value=0,
+        }
     )
-
+    store = s3fs.S3Map(root=output_params.path, s3=s3)
+    
+    output_volume = None
+    # Create zarr group for first time
+    if not zarr.hierarchy.contains_group(store): 
+        out_group = zarr.group(store=store, overwrite=True)
+        path = "0"
+        chunksize = output_params.chunksize
+        datatype = output_params.dtype
+        dimension_separator = "/"
+        compressor = output_params.compressor
+        global output_volume
+        output_volume = out_group.create_dataset(
+            path,
+            shape=(
+                1,
+                1,
+                output_volume_size[0],
+                output_volume_size[1],
+                output_volume_size[2],
+            ),
+            chunks=chunksize,
+            dtype=datatype,
+            compressor=compressor,
+            dimension_separator=dimension_separator,
+            overwrite=True,
+            fill_value=0,
+        )
+    # Otherwise, open exisitng zarr group
+    else:
+        output_volume = zarr.open_group(output_params.path, mode="w")
+        
     return output_volume
-
 
 def get_cell_count_zyx(
     output_volume_size: tuple[int, int, int], cell_size: tuple[int, int, int]
@@ -243,7 +244,7 @@ def run_fusion(
     tile_aabbs = d
     output_volume_size = e
     output_volume_origin = f  # Temp variables to meet line character maximum.
-    output_volume = initalize_output_volume(output_params, output_volume_size)
+    output_volume = initialize_output_volume(output_params, output_volume_size)
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
 
