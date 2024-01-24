@@ -155,6 +155,9 @@ def initialize_output_volume(
     """
     
     # Default s3 cloud execution
+    # MODE = 'a'
+    # Create zarr store if it does not exist, otherwise, use the existing 
+    # zarr store. MODE = 'w' is WRONG-- zarr traverses every file inside the zarr volume to do some overwrite operation-- which is incredibly slow. 
     s3 = s3fs.S3FileSystem(
         config_kwargs={
             'max_pool_connections': 50,
@@ -168,39 +171,33 @@ def initialize_output_volume(
             }
         }
     )
-    store = s3fs.S3Map(root=output_params.path, s3=s3)
+    store = s3fs.S3Map(root=output_params.path, s3=s3)    
+    out_group = zarr.open_group(store=store, mode='a')
     
-    output_volume = None
-    # Create zarr group for first time
-    if not zarr.hierarchy.contains_group(store): 
-        out_group = zarr.group(store=store, overwrite=True)
-        path = "0"
-        chunksize = output_params.chunksize
-        datatype = output_params.dtype
-        dimension_separator = "/"
-        compressor = output_params.compressor
-        global output_volume
-        output_volume = out_group.create_dataset(
-            path,
-            shape=(
-                1,
-                1,
-                output_volume_size[0],
-                output_volume_size[1],
-                output_volume_size[2],
-            ),
-            chunks=chunksize,
-            dtype=datatype,
-            compressor=compressor,
-            dimension_separator=dimension_separator,
-            overwrite=True,
-            fill_value=0,
-        )
-    # Otherwise, open exisitng zarr group
-    else:
-        output_volume = zarr.open_group(output_params.path, mode="w")
+    path = "0"
+    chunksize = output_params.chunksize
+    datatype = output_params.dtype
+    dimension_separator = "/"
+    compressor = output_params.compressor
+    output_volume = out_group.create_dataset(
+        path,
+        shape=(
+            1,
+            1,
+            output_volume_size[0],
+            output_volume_size[1],
+            output_volume_size[2],
+        ),
+        chunks=chunksize,
+        dtype=datatype,
+        compressor=compressor,
+        dimension_separator=dimension_separator,
+        overwrite=True,
+        fill_value=0,
+    )
         
     return output_volume
+
 
 def get_cell_count_zyx(
     output_volume_size: tuple[int, int, int], cell_size: tuple[int, int, int]
