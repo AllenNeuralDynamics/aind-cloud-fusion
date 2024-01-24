@@ -172,7 +172,7 @@ def initialize_output_volume(
         }
     )
     store = s3fs.S3Map(root=output_params.path, s3=s3)    
-    out_group = zarr.open_group(store=store, mode='a')
+    out_group = zarr.open(store=store, mode='a')
     
     path = "0"
     chunksize = output_params.chunksize
