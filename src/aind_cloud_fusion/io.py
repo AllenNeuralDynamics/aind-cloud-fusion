@@ -363,22 +363,41 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
             if match: 
                 channel_num = int(match.group(1))
+                
+                
             if channel_num == self.channel_num:
                 full_resolution_p = self.s3_path + p + '/0'
-                tile_zarr = da.from_zarr(full_resolution_p)
-                tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
-                
+            
+                # Replacing this with an s3fs with higher read concurrency. 
+                s3 = s3fs.S3FileSystem(
+                config_kwargs={
+                        'max_pool_connections': 50,
+                        's3': {
+                          'max_concurrent_requests': 20  # Increased 10->20.
+                        }, # Compute instances are in-network of s3 buckets. 
+                        'retries': {
+                          'total_max_attempts': 100,
+                          'mode': 'adaptive',
+                        }
+                    }
+                )
+                store = s3fs.S3Map(root=full_resolution_p, s3=s3)
+                in_group = zarr.open(store=store, mode='r')       
+                tile_zarr = da.from_zarr(in_group)
+
                 s_parts = p.split('_')
                 location = (int(s_parts[2]), 
                             int(s_parts[4]), 
                             int(s_parts[6]))
                 tile_id = tile_id_lut[location]
 
-                print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
-                tile_arrays[tile_id] = ZarrArray(tile_zarr_zyx)
-
+                # tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
+                # tile_arrays[int(tile_id)] = ZarrArray(tile_zarr_zyx)
+                # ^Although not computed, causes a large task graph.                 
+                tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
+                
         return tile_arrays
-    
+                
     def _list_bucket_directory(self, bucket_name: str, directory_path: str):
         client = boto3.client("s3")
         result = client.list_objects(

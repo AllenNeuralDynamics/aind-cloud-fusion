@@ -137,13 +137,14 @@ def run_dispim_worker(yml_path: str,
 
     # Application Object: BLENDING_MODULE
     BLENDING_MODULE = blend.MaxProjection()
-
+    
     # Finally, initalize and run fusion. 
     # For the dispim pipeline, each worker will run on an entire channel. 
     worker_cells = []
     _, _, _, _, output_volume_size, _ = fusion.initialize_fusion(
         DATASET, POST_REG_TFMS, OUTPUT_PARAMS
     )
+    
     z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
         output_volume_size, CELL_SIZE
     )
