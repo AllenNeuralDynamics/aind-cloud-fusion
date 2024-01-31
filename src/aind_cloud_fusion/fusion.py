@@ -283,7 +283,8 @@ def run_fusion(
 
             # Clear memory for runtime stability
             delayed_color_cells = []
-            client.restart()
+            # client.restart()
+            # ^ Remove restart command, dask bug
             
             LOGGER.info(f'Finished up to {cell_num}/{num_cells}. Batch time: {time.time() - batch_start}')
             batch_start = time.time()
