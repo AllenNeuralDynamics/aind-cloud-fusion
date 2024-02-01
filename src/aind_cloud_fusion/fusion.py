@@ -251,52 +251,56 @@ def run_fusion(
 
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
-    num_cells = len(runtime_params.worker_cells)
-    batch_size = 1000
-    LOGGER.info(f'Coloring {num_cells} cells')
-    LOGGER.info(f'Batch Size: {batch_size}')
-    
-    delayed_color_cells = []
-    for cell_num, cell in enumerate(runtime_params.worker_cells):
-        z, y, x = cell
-        delayed_color_cells.append(
-            color_cell(
-                tile_arrays,
-                tile_transforms,
-                tile_sizes_zyx,
-                tile_aabbs,
-                output_volume,
-                output_volume_origin,
-                cell_size,
-                blend_module,
-                z,
-                y,
-                x,
-                torch.device("cpu"),  # Hardcoding CPU cluster
-                LOGGER
-            )
-        )
-        # Batching
-        if len(delayed_color_cells) == batch_size: 
-            LOGGER.info(f'Calculating up to {cell_num}/{num_cells}...')
-            da.compute(*delayed_color_cells)
+    output_path = str(os.path.abspath('../results'))   # NOTE: These lines are hardcoded for logging.
+    run_id = os.path.basename(output_params.path)
+    print(f'Run id {run_id}')
+    with performance_report(filename=f"{output_path}/{run_id}.html"):
+        num_cells = len(runtime_params.worker_cells)
+        batch_size = 1000
+        LOGGER.info(f'Coloring {num_cells} cells')
+        LOGGER.info(f'Batch Size: {batch_size}')
 
-            # Clear memory for runtime stability
-            delayed_color_cells = []
-            # client.restart()
-            # ^ Remove restart command, dask bug
-            
-            LOGGER.info(f'Finished up to {cell_num}/{num_cells}. Batch time: {time.time() - batch_start}')
-            batch_start = time.time()
-    
-    # Compute remaining cells
-    LOGGER.info(f'Calculating up to {num_cells}/{num_cells}...')
-    da.compute(*delayed_color_cells)
-    delayed_color_cells = []
-    LOGGER.info(f'Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}')
-    batch_start = time.time()
-    
-    LOGGER.info(f"Runtime: {time.time() - start_run}")
+        delayed_color_cells = []
+        for cell_num, cell in enumerate(runtime_params.worker_cells):
+            z, y, x = cell
+            delayed_color_cells.append(
+                color_cell(
+                    tile_arrays,
+                    tile_transforms,
+                    tile_sizes_zyx,
+                    tile_aabbs,
+                    output_volume,
+                    output_volume_origin,
+                    cell_size,
+                    blend_module,
+                    z,
+                    y,
+                    x,
+                    torch.device("cpu"),  # Hardcoding CPU cluster
+                    LOGGER
+                )
+            )
+            # Batching
+            if len(delayed_color_cells) == batch_size: 
+                LOGGER.info(f'Calculating up to {cell_num}/{num_cells}...')
+                da.compute(*delayed_color_cells)
+
+                # Clear memory for runtime stability
+                delayed_color_cells = []
+                # client.restart()
+                # ^ Remove restart command, dask bug
+
+                LOGGER.info(f'Finished up to {cell_num}/{num_cells}. Batch time: {time.time() - batch_start}')
+                batch_start = time.time()
+
+        # Compute remaining cells
+        LOGGER.info(f'Calculating up to {num_cells}/{num_cells}...')
+        da.compute(*delayed_color_cells)
+        delayed_color_cells = []
+        LOGGER.info(f'Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}')
+        batch_start = time.time()
+
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
 
 
 
@@ -540,4 +544,3 @@ def color_cell(
     
     del fused_cell
     del output_chunk
-
