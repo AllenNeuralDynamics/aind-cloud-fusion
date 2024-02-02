@@ -35,7 +35,7 @@ def initialize_fusion(
     output_volume_origin: Location of output volume
     """
 
-    tile_arrays: dict[int, io.LazyArray] = dataset.tile_volumes_zyx
+    tile_arrays: dict[int, io.LazyArray] = dataset.tile_volumes_tczyx
 
     tile_transforms: dict[
         int, list[geometry.Transform]
@@ -68,7 +68,7 @@ def initialize_fusion(
     tile_boundary_point_cloud_zyx = []
 
     for tile_id, tile_arr in tile_arrays.items():
-        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape
+        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape[2:]
         tile_boundaries = torch.Tensor(
             [
                 [0.0, 0.0, 0.0],
@@ -151,7 +151,7 @@ def initalize_output_volume(
     """
 
     # Local execution
-    out_group = zarr.open_group(output_params.path, mode="w")
+    out_group = zarr.open_group(output_params.path, mode="a")
     
     # Cloud execuion
     if output_params.path.startswith('s3'):
