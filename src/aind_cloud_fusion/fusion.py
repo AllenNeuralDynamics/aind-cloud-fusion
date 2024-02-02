@@ -207,6 +207,13 @@ def get_cell_count_zyx(
     y_cnt = int(np.ceil(output_volume_size[1] / cell_size[1]))
     x_cnt = int(np.ceil(output_volume_size[2] / cell_size[2]))
 
+    # Zarr struggles with writing boundary chunks
+    # This is definitely a zarr library bug. 
+    # Solution: simply do not write the boundary chunks
+    z_cnt = z_cnt - 1
+    y_cnt = y_cnt - 1
+    x_cnt = x_cnt - 1
+    
     return z_cnt, y_cnt, x_cnt
 
 
@@ -279,6 +286,8 @@ def run_fusion(
         # Important for prevent running out of resources
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
+        torch.multiprocessing.set_sharing_strategy('file_system')
+        
         # Run Fusion: Fill work queue (active processes) with inital tasks
         # Task-specific info includes process_args and device.
         start_run = time.time()
@@ -412,6 +421,7 @@ def color_cell(
     cell_box[:, 1] = np.minimum(
         cell_box[:, 1], np.array(output_volume_size[2:])
     )
+    
     cell_box = cell_box.flatten()
 
     # Collision Detection
@@ -518,6 +528,8 @@ def color_cell(
 
         # Prep inputs to interpolation
         image_crop_slice = (
+            0, 
+            0,
             slice(crop_min_z, crop_max_z),
             slice(crop_min_y, crop_max_y),
             slice(crop_min_x, crop_max_x),
@@ -561,7 +573,7 @@ def color_cell(
 
         # Interpolate and Fuse
         tile_contribution = torch.nn.functional.grid_sample(
-            image_crop, tile_coords, padding_mode="zeros", mode="nearest"
+            image_crop, tile_coords, padding_mode="zeros", mode="nearest", align_corners=False
         )
         kwargs = {'chunk_tile_ids': [tile_id],
                   'cell_box': cell_box}
@@ -585,6 +597,7 @@ def color_cell(
     )
     # Convert from float32 -> canonical uint16
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
+    
     output_volume[output_slice] = output_chunk
 
     del fused_cell

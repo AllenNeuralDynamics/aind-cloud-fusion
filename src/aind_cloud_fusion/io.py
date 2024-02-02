@@ -9,9 +9,11 @@ import boto3
 import dask.array as da
 import numpy as np
 import re
+import s3fs
 import torch
 import xmltodict
 import yaml
+import zarr
 
 import aind_cloud_fusion.geometry as geometry
 
