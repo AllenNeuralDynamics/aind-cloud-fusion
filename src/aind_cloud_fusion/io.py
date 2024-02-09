@@ -324,15 +324,16 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
         with open(self.xml_path, "r") as file:
             data: OrderedDict = xmltodict.parse(file.read())
-        tile_id_lut = {}
+        len_tile_id = 0
         for zgroup in data['SpimData']['SequenceDescription']['ImageLoader']['zgroups']['zgroup']:
             tile_id = zgroup['@setup']
             tile_name = zgroup['path']
-            s_parts = tile_name.split('_')
-            location = (int(s_parts[2]), 
-                        int(s_parts[4]), 
-                        int(s_parts[6]))
-            tile_id_lut[location] = int(tile_id)
+            #s_parts = tile_name.split('_')
+            #location = (int(s_parts[2]), 
+            #            int(s_parts[4]), 
+            #            int(s_parts[6]))
+            #tile_id_lut[location] = int(tile_id)
+            len_tile_id+=1
 
         # Reference path: s3://aind-open-data/HCR_677594_2023-10-20_15-10-36/SPIM.ome.zarr/
         slash_2 = self.s3_path.find('/', self.s3_path.find('/') + 1)
@@ -340,7 +341,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
         bucket_name = self.s3_path[slash_2 + 1:slash_3]
         directory_path = self.s3_path[slash_3 + 1:]
 
-        pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
+        # pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
         for p in self._list_bucket_directory(bucket_name, directory_path):
             if p.endswith('.zgroup'):
                 continue
@@ -355,7 +356,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             # Data loading
             match = None
             channel_num = 0
-            pattern = r'(\d{3})\.zarr$'
+            pattern = r'(\d{1})\.zarr$'
             match = re.search(pattern, p) 
 
             if match: 
@@ -381,17 +382,24 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                 in_group = zarr.open(store=store, mode='r')       
                 tile_zarr = da.from_zarr(in_group)
 
-                s_parts = p.split('_')
-                location = (int(s_parts[2]), 
-                            int(s_parts[4]), 
-                            int(s_parts[6]))
-                tile_id = tile_id_lut[location]
+                tile_id_from_name_pattern = r'TILE_(\d{4})'
+                tile_id_from_name_match = re.search(tile_id_from_name_pattern, p)
+
+                if tile_id_from_name_match:
+                    tile_id_from_name = int(tile_id_from_name_match.group(1))
+                else: 
+                    print("Error getting tile id number")
+                #s_parts = p.split('_')
+                #location = (int(s_parts[2]), 
+                #            int(s_parts[4]), 
+                #            int(s_parts[6]))
+                tile_id = tile_id_from_name
 
                 # tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
                 # tile_arrays[int(tile_id)] = ZarrArray(tile_zarr_zyx)
                 # ^Although not computed, causes a large task graph. 
 
-                print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
+                print(f'Loading Tile {tile_id} / {(len_tile_id)}')
                 tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
 
         return tile_arrays
