@@ -153,11 +153,11 @@ def initialize_output_volume(
     -------
     Zarr thread-safe datastore initialized on OutputParameters.
     """
-    
+
     # Default s3 cloud execution
     # MODE = 'a'
-    # Create zarr store if it does not exist, otherwise, use the existing 
-    # zarr store. MODE = 'w' is WRONG-- zarr traverses every file inside the zarr volume to do some overwrite operation-- which is incredibly slow. 
+    # Create zarr store if it does not exist, otherwise, use the existing
+    # zarr store. MODE = 'w' is WRONG-- zarr traverses every file inside the zarr volume to do some overwrite operation-- which is incredibly slow.
     s3 = s3fs.S3FileSystem(
         config_kwargs={
             'max_pool_connections': 50,
@@ -171,9 +171,9 @@ def initialize_output_volume(
             }
         }
     )
-    store = s3fs.S3Map(root=output_params.path, s3=s3)    
+    store = s3fs.S3Map(root=output_params.path, s3=s3)
     out_group = zarr.open(store=store, mode='a')
-    
+
     path = "0"
     chunksize = output_params.chunksize
     datatype = output_params.dtype
@@ -195,7 +195,7 @@ def initialize_output_volume(
         overwrite=True,
         fill_value=0,
     )
-        
+
     return output_volume
 
 
@@ -281,7 +281,7 @@ def run_fusion(
                 )
             )
             # Batching
-            if len(delayed_color_cells) == batch_size: 
+            if len(delayed_color_cells) == batch_size:
                 LOGGER.info(f'Calculating up to {cell_num}/{num_cells}...')
                 da.compute(*delayed_color_cells)
 
@@ -456,8 +456,8 @@ def color_cell(
 
         # Prep inputs to interpolation
         image_crop_slice = (
-            0, 
-            0, 
+            0,
+            0,
             slice(crop_min_z, crop_max_z),
             slice(crop_min_y, crop_max_y),
             slice(crop_min_x, crop_max_x),
@@ -504,11 +504,12 @@ def color_cell(
             image_crop, tile_coords, padding_mode="zeros", mode="nearest", align_corners=False
         )
         kwargs = {'chunk_tile_ids': [tile_id],
-                  'cell_box': cell_box}
+                  'cell_box': cell_box,
+                  'num_tile_contributions': len(overlapping_tiles)}
         fused_cell = blend_module.blend(
-            fused_cell, 
+            fused_cell,
             [tile_contribution],
-            device, 
+            device,
             kwargs
         )
 
@@ -527,8 +528,8 @@ def color_cell(
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
 
     output_volume[output_slice] = output_chunk
-    
-    # Replace zarr write with dask's write b/c zarr's write has a hidden 'list objects' side effect. 
+
+    # Replace zarr write with dask's write b/c zarr's write has a hidden 'list objects' side effect.
     # output_chunk = dask.array.from_array(output_chunk)
     # da.store(
     #     output_chunk,
@@ -538,9 +539,9 @@ def color_cell(
     #     compute=True,
     #     return_stored=False,
     # )
-    # Actually, the 'list objects' performance hit was due to zarr write vs zarr append. 
+    # Actually, the 'list objects' performance hit was due to zarr write vs zarr append.
     # Performing an operation to a dask array (even a trial one like this) inside of a dask delayed
-    # results in undetermined behavior. 
-    
+    # results in undetermined behavior.
+
     del fused_cell
     del output_chunk
