@@ -57,7 +57,7 @@ class ZarrArray(LazyArray):
 
 class Dataset:
     """
-    Data are 5d tczyx objects. 
+    Data are 5d tczyx objects.
     Transforms are 3d zyx objects.
     """
 
@@ -107,24 +107,24 @@ class BigStitcherDataset(Dataset):
     @property
     def tile_volumes_tczyx(self) -> dict[int, LazyArray]:
         tile_paths = self._extract_tile_paths(self.xml_path)
-        for t_id, t_path in tile_paths.items(): 
+        for t_id, t_path in tile_paths.items():
             if not self.s3_path.endswith('/'):
                 self.s3_path = self.s3_path + '/'
             tile_paths[t_id] = self.s3_path + Path(t_path).name + '/0'
-            
+
         tile_arrays: dict[int, LazyArray] = {}
-        for tile_id, t_path in tile_paths.items():            
+        for tile_id, t_path in tile_paths.items():
             print(f'Loading Tile {tile_id} / {len(tile_paths)}')
 
             tile_zarr = da.from_zarr(t_path)
-            
-            # Replacing this with an s3fs with higher read concurrency. 
+
+            # Replacing this with an s3fs with higher read concurrency.
             s3 = s3fs.S3FileSystem(
             config_kwargs={
                     'max_pool_connections': 50,
                     's3': {
                       'max_concurrent_requests': 20  # Increased 10->20.
-                    }, # Compute instances are in-network of s3 buckets. 
+                    }, # Compute instances are in-network of s3 buckets.
                     'retries': {
                       'total_max_attempts': 100,
                       'mode': 'adaptive',
@@ -132,12 +132,12 @@ class BigStitcherDataset(Dataset):
                 }
             )
             store = s3fs.S3Map(root=t_path, s3=s3)
-            in_group = zarr.open(store=store, mode='r')       
+            in_group = zarr.open(store=store, mode='r')
             tile_zarr = da.from_zarr(in_group)
-            
+
             # tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
             # tile_arrays[int(tile_id)] = ZarrArray(tile_zarr_zyx)
-            # ^Although not computed, causes a large task graph. 
+            # ^Although not computed, causes a large task graph.
 
             tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
 
@@ -306,11 +306,11 @@ class BigStitcherDataset(Dataset):
 
 class BigStitcherDatasetChannel(BigStitcherDataset):
     """
-    Convenience Dataset class that reuses tile registrations, 
-    tile shapes, and tile resolution across channels. 
-    Tile volumes is overloaded with channel-specific data. 
+    Convenience Dataset class that reuses tile registrations,
+    tile shapes, and tile resolution across channels.
+    Tile volumes is overloaded with channel-specific data.
     """
-    
+
     def __init__(self, xml_path: str, s3_path: str, channel_num: int):
         """
         Only new information required is channel number.
@@ -332,8 +332,8 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             tile_id = zgroup['@setup']
             tile_name = zgroup['path']
             s_parts = tile_name.split('_')
-            location = (int(s_parts[2]), 
-                        int(s_parts[4]), 
+            location = (int(s_parts[2]),
+                        int(s_parts[4]),
                         int(s_parts[6]))
             tile_id_lut[location] = int(tile_id)
 
@@ -354,27 +354,27 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             #     f"""Data directory {p} does not follow file convention:
             #     <tile_name, no underscores>_X_####_Y_####_Z_####_ch_###.zarr
             #     """
-            
+
             # Data loading
             match = None
             channel_num = 0
             pattern = r'(\d{3})\.zarr$'
-            match = re.search(pattern, p) 
+            match = re.search(pattern, p)
 
-            if match: 
+            if match:
                 channel_num = int(match.group(1))
-                
-                
+
+
             if channel_num == self.channel_num:
                 full_resolution_p = self.s3_path + p + '/0'
-            
-                # Replacing this with an s3fs with higher read concurrency. 
+
+                # Replacing this with an s3fs with higher read concurrency.
                 s3 = s3fs.S3FileSystem(
                 config_kwargs={
                         'max_pool_connections': 50,
                         's3': {
                           'max_concurrent_requests': 20  # Increased 10->20.
-                        }, # Compute instances are in-network of s3 buckets. 
+                        }, # Compute instances are in-network of s3 buckets.
                         'retries': {
                           'total_max_attempts': 100,
                           'mode': 'adaptive',
@@ -382,22 +382,22 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                     }
                 )
                 store = s3fs.S3Map(root=full_resolution_p, s3=s3)
-                in_group = zarr.open(store=store, mode='r')       
+                in_group = zarr.open(store=store, mode='r')
                 tile_zarr = da.from_zarr(in_group)
 
                 s_parts = p.split('_')
-                location = (int(s_parts[2]), 
-                            int(s_parts[4]), 
+                location = (int(s_parts[2]),
+                            int(s_parts[4]),
                             int(s_parts[6]))
                 tile_id = tile_id_lut[location]
 
                 # tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
                 # tile_arrays[int(tile_id)] = ZarrArray(tile_zarr_zyx)
-                # ^Although not computed, causes a large task graph.                 
+                # ^Although not computed, causes a large task graph.
                 tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
-                
+
         return tile_arrays
-                
+
     def _list_bucket_directory(self, bucket_name: str, directory_path: str):
         client = boto3.client("s3")
         result = client.list_objects(
@@ -410,10 +410,10 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
         # Parse the ending files from the paths
         files = []
-        for p in paths: 
-            if p.endswith('/'): 
+        for p in paths:
+            if p.endswith('/'):
                 p = p.rstrip("/")  # Remove trailing slash from directories
-            
+
             parts = p.split('/')
             files.append(parts[-1])
 
@@ -430,15 +430,31 @@ class OutputParameters:
     compressor = Blosc(cname='zstd', clevel=1, shuffle=Blosc.SHUFFLE)
 
 
+# class RuntimeParameters:
+#     def __init__(
+#         self,
+#         use_gpus: bool,
+#         devices: list[torch.cuda.device],
+#         pool_size: int,
+#         worker_cells: list[tuple[int, int, int]] = [],
+#     ):
+#         self.use_gpus = use_gpus
+#         self.devices = devices
+#         self.pool_size = pool_size
+#         self.worker_cells = worker_cells
+
+@dataclass
 class RuntimeParameters:
-    def __init__(
-        self,
-        use_gpus: bool,
-        devices: list[torch.cuda.device],
-        pool_size: int,
-        worker_cells: list[tuple[int, int, int]] = [],
-    ):
-        self.use_gpus = use_gpus
-        self.devices = devices
-        self.pool_size = pool_size
-        self.worker_cells = worker_cells
+    """
+    Simplified Runtime Parameters
+    option:
+        0: single process exectution
+        1: multiprocessing execution
+        2: dask execution
+    pool_size: number of processes/vCPUs for options {1, 2}
+    worker_cells:
+        list of cells/chunks this execution operates on
+    """
+    option: int
+    pool_size: int
+    worker_cells: list[tuple[int, int, int]]
