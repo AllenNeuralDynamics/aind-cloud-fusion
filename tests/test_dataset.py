@@ -24,7 +24,7 @@ class TestDataset(io.Dataset):
         self.input_resolution_zyx = input_resolution_zyx
 
     @property
-    def tile_volumes_zyx(self) -> dict[int, io.LazyArray]:
+    def tile_volumes_tczyx(self) -> dict[int, io.LazyArray]:
         tile_volumes = {0: self.tile_1_zyx, 1: self.tile_2_zyx}
         return tile_volumes
 
@@ -75,8 +75,12 @@ def generate_z_dataset() -> tuple[np.ndarray, io.Dataset]:
 
     input_resolution_zyx = (1.0, 1.0, 1.0)
 
+    # Reshape from 3D -> 5D
+    tile_1_tczyx = tile_1_zyx[np.newaxis, np.newaxis, ...]
+    tile_2_tczyx = tile_2_zyx[np.newaxis, np.newaxis, ...]
+
     dataset = TestDataset(
-        tile_1_zyx, tile_2_zyx, registration_zyx, input_resolution_zyx
+        tile_1_tczyx, tile_2_tczyx, registration_zyx, input_resolution_zyx
     )
 
     return ground_truth, dataset
@@ -107,8 +111,12 @@ def generate_y_dataset() -> tuple[np.ndarray, io.Dataset]:
 
     input_resolution_zyx = (1.0, 1.0, 1.0)
 
+    # Reshape from 3D -> 5D
+    tile_1_tczyx = tile_1_zyx[np.newaxis, np.newaxis, ...]
+    tile_2_tczyx = tile_2_zyx[np.newaxis, np.newaxis, ...]
+
     dataset = TestDataset(
-        tile_1_zyx, tile_2_zyx, registration_zyx, input_resolution_zyx
+        tile_1_tczyx, tile_2_tczyx, registration_zyx, input_resolution_zyx
     )
 
     return ground_truth, dataset
@@ -140,12 +148,17 @@ def generate_x_dataset() -> tuple[np.ndarray, io.Dataset]:
 
     input_resolution_zyx = (1.0, 1.0, 1.0)
 
+    # Reshape from 3D -> 5D
+    tile_1_tczyx = tile_1_zyx[np.newaxis, np.newaxis, ...]
+    tile_2_tczyx = tile_2_zyx[np.newaxis, np.newaxis, ...]
+
     dataset = TestDataset(
-        tile_1_zyx, tile_2_zyx, registration_zyx, input_resolution_zyx
+        tile_1_tczyx, tile_2_tczyx, registration_zyx, input_resolution_zyx
     )
 
     return ground_truth, dataset
 
+"""
 
 def generate_masked_z_dataset():
     img = Image.open("tests/nueral_dynamics_logo.jpeg").convert("L")
@@ -192,7 +205,7 @@ def generate_masked_y_dataset():
     # Modify some signal in the overlap region to test masked blending,
     # Wash out 2nd image overlap.
     s = tile_1_zyx.shape[1]  # Split axis.
-    tile_2_zyx[:, 0 : (s // 2), :] = 255  
+    tile_2_zyx[:, 0 : (s // 2), :] = 255
 
     # Registration matrix is (identity, translation = to tile cut).
     registration_zyx = np.array(
@@ -206,7 +219,6 @@ def generate_masked_y_dataset():
     )
 
     return ground_truth, dataset
-
 
 def generate_masked_x_dataset():
     img = Image.open("tests/nueral_dynamics_logo.jpeg").convert("L")
@@ -238,3 +250,6 @@ def generate_masked_x_dataset():
     )
 
     return ground_truth, dataset
+
+
+"""
