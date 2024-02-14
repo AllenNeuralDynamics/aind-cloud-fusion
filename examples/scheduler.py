@@ -12,7 +12,6 @@ import glob
 import os
 import xmltodict
 
-import random
 import numpy as np
 from pathlib import Path
 

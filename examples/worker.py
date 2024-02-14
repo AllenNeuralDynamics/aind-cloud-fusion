@@ -10,9 +10,6 @@ import time
 from pathlib import Path
 import yaml
 
-import torch
-import numpy as np
-
 import aind_cloud_fusion.blend as blend
 import aind_cloud_fusion.fusion as fusion
 import aind_cloud_fusion.geometry as geometry
