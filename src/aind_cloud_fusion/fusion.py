@@ -154,25 +154,32 @@ def initialize_output_volume(
     Zarr thread-safe datastore initialized on OutputParameters.
     """
 
-    # Default s3 cloud execution
-    # MODE = 'a'
-    # Create zarr store if it does not exist, otherwise, use the existing
-    # zarr store. MODE = 'w' is WRONG-- zarr traverses every file inside the zarr volume to do some overwrite operation-- which is incredibly slow.
-    s3 = s3fs.S3FileSystem(
-        config_kwargs={
-            'max_pool_connections': 50,
-            's3': {
-              'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
-              'max_concurrent_requests': 20  # Increased from 10 -> 20.
-            },
-            'retries': {
-              'total_max_attempts': 100,
-              'mode': 'adaptive',
+    # Local path for testing: 
+    if not output_params.path.startswith('s3'):
+        out_group = zarr.open(output_params.path)
+
+    else:
+        # Default s3 cloud execution
+        # MODE = 'a'
+        # Create zarr store if it does not exist, otherwise, use the existing
+        # zarr store. MODE = 'w' is WRONG-- zarr traverses every file inside the zarr volume to do some overwrite operation-- which is incredibly slow.
+        s3 = s3fs.S3FileSystem(
+            config_kwargs={
+                'max_pool_connections': 50,
+                's3': {
+                'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
+                'max_concurrent_requests': 20  # Increased from 10 -> 20.
+                },
+                'retries': {
+                'total_max_attempts': 100,
+                'mode': 'adaptive',
+                }
             }
-        }
-    )
-    store = s3fs.S3Map(root=output_params.path, s3=s3)
-    out_group = zarr.open(store=store, mode='a')
+        )
+        store = s3fs.S3Map(root=output_params.path, s3=s3)
+        out_group = zarr.open(store=store, mode='a')
+
+
 
     path = "0"
     chunksize = output_params.chunksize
@@ -300,7 +307,7 @@ def run_fusion(
         LOGGER.info(f'Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}')
         batch_start = time.time()
 
-        LOGGER.info(f"Runtime: {time.time() - start_run}")
+        # LOGGER.info(f"Runtime: {time.time() - start_run}")
 
 
 
