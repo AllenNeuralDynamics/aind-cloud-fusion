@@ -1,12 +1,11 @@
 """Core fusion algorithm."""
-import gc
 import os
 import logging
 import time
 
 import dask
 import dask.array as da
-from dask.distributed import Client, LocalCluster, performance_report
+from dask.distributed import Client, LocalCluster
 import numpy as np
 import torch
 import s3fs
@@ -154,7 +153,7 @@ def initialize_output_volume(
     Zarr thread-safe datastore initialized on OutputParameters.
     """
 
-    # Local path for testing: 
+    # Local path for testing:
     if not output_params.path.startswith('s3'):
         out_group = zarr.open(output_params.path)
 
@@ -178,8 +177,6 @@ def initialize_output_volume(
         )
         store = s3fs.S3Map(root=output_params.path, s3=s3)
         out_group = zarr.open(store=store, mode='a')
-
-
 
     path = "0"
     chunksize = output_params.chunksize
@@ -252,16 +249,147 @@ def run_fusion(
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
 
-    start_run = time.time()
-    batch_start = start_run
-    client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
+    # Vanilla Processing
+    if runtime_params.option == 0:
+        start_run = time.time()
 
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        process_args: list[dict] = []
+        num_cells = len(runtime_params.worker_cells)
+        for cell_num, cell in enumerate(runtime_params.worker_cells):
+            z, y, x = cell
+            process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
 
-    output_path = str(os.path.abspath('../results'))   # NOTE: These lines are hardcoded for logging.
-    run_id = os.path.basename(output_params.path)
-    print(f'Run id {run_id}')
-    with performance_report(filename=f"{output_path}/{run_id}.html"):
+        for p_args in process_args:
+            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
+            start_time = time.time()
+            color_cell(tile_arrays,
+                    tile_transforms,
+                    tile_sizes_zyx,
+                    tile_aabbs,
+                    output_volume,
+                    output_volume_origin,
+                    cell_size,
+                    blend_module,
+                    p_args["z"],
+                    p_args["y"],
+                    p_args["x"],
+                    torch.device('cpu'),
+                    LOGGER,
+            )
+            LOGGER.info(
+                f"Finished Cell {p_args['cell_num']}/{num_cells}: {time.time() - start_time}"
+            )
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
+
+    # Multi Processing
+    elif runtime_params.option == 1:
+        start_run = time.time()
+
+        process_args: list[dict] = []
+        num_cells = len(runtime_params.worker_cells)
+        for cell_num, cell in enumerate(runtime_params.worker_cells):
+            z, y, x = cell
+            process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
+
+        # Important for prevent running out of resources
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        torch.multiprocessing.set_sharing_strategy('file_system')
+
+        # Fill work queue (active processes) with inital tasks
+        start_run = time.time()
+        active_processes: list[
+            tuple
+        ] = []  # (process, device, cell_num, start_time)
+        for i in range(runtime_params.pool_size):
+            p_args = process_args.pop(0)
+            p = torch.multiprocessing.Process(
+                target=color_cell,
+                args=(
+                    tile_arrays,
+                    tile_transforms,
+                    tile_sizes_zyx,
+                    tile_aabbs,
+                    output_volume,
+                    output_volume_origin,
+                    cell_size,
+                    blend_module,
+                    p_args["z"],
+                    p_args["y"],
+                    p_args["x"],
+                    torch.device('cpu'),
+                    LOGGER,
+                ),
+            )
+            active_processes.append(
+                (
+                    p,
+                    torch.device('cpu'),
+                    p_args["cell_num"],
+                    time.time(),
+                )
+            )
+            LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
+            p.start()
+
+        # Run Fusion: Exhaust all the tasks
+        # Tasks all implictly defined in process_args buffer
+        while len(active_processes) != 0:
+            tmp = []
+            for p, device, cell_num, start_time in active_processes:
+                p.join(
+                    timeout=0
+                )  # timeout indicates do not wait until the process is explicitly finished
+
+                if p.is_alive():
+                    tmp.append((p, device, cell_num, start_time))
+                else:
+                    p.close()
+                    del p
+                    LOGGER.info(
+                        f"Finished Cell {cell_num}/{num_cells}: {time.time() - start_time}"
+                    )
+
+                    if len(process_args) != 0:
+                        p_args = process_args.pop(0)
+                        new_p = torch.multiprocessing.Process(
+                            target=color_cell,
+                            args=(
+                                tile_arrays,
+                                tile_transforms,
+                                tile_sizes_zyx,
+                                tile_aabbs,
+                                output_volume,
+                                output_volume_origin,
+                                cell_size,
+                                blend_module,
+                                p_args["z"],
+                                p_args["y"],
+                                p_args["x"],
+                                device,
+                                LOGGER,
+                            ),
+                        )
+                        tmp.append(
+                            (new_p, device, p_args["cell_num"], time.time())
+                        )
+                        LOGGER.info(
+                            f'Starting Cell {p_args["cell_num"]}/{num_cells}'
+                        )
+                        new_p.start()
+
+                active_processes = tmp
+
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
+
+    # Dask
+    elif runtime_params.option == 2:
+        start_run = time.time()
+
+        batch_start = start_run
+        client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
+
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
         num_cells = len(runtime_params.worker_cells)
         batch_size = 1000
         LOGGER.info(f'Coloring {num_cells} cells')
@@ -271,7 +399,7 @@ def run_fusion(
         for cell_num, cell in enumerate(runtime_params.worker_cells):
             z, y, x = cell
             delayed_color_cells.append(
-                color_cell(
+                dask.delayed(color_cell, pure=True)(
                     tile_arrays,
                     tile_transforms,
                     tile_sizes_zyx,
@@ -307,11 +435,9 @@ def run_fusion(
         LOGGER.info(f'Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}')
         batch_start = time.time()
 
-        # LOGGER.info(f"Runtime: {time.time() - start_run}")
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
 
 
-
-@dask.delayed(pure=True)
 def color_cell(
     tile_arrays: dict[int, io.LazyArray],
     tile_transforms: dict[int, list[geometry.Transform]],
@@ -511,8 +637,8 @@ def color_cell(
             image_crop, tile_coords, padding_mode="zeros", mode="nearest", align_corners=False
         )
         kwargs = {'chunk_tile_ids': [tile_id],
-                  'cell_box': cell_box,
-                  'num_tile_contributions': len(overlapping_tiles)}
+                  'cell_box': cell_box}
+
         fused_cell = blend_module.blend(
             fused_cell,
             [tile_contribution],

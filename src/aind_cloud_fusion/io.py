@@ -11,7 +11,6 @@ import numpy as np
 from numcodecs import Blosc
 import re
 import s3fs
-import torch
 import xmltodict
 import yaml
 import zarr
