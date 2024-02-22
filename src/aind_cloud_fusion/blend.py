@@ -16,15 +16,11 @@ class BlendingModule:
     """
 
     def blend(self,
-              snowball_chunk: torch.Tensor,
               chunks: list[torch.Tensor],
               device: torch.device,
               kwargs = {}
     ) -> torch.Tensor:
         """
-        snowball_chunk: base chunk to modify.
-            Defining a snowball_chunk helps to amortize computation
-            and limit peak memory usage.
         chunks:
             Chunks to blend into snowball_chunk
         kwargs:
@@ -41,9 +37,7 @@ class MaxProjection(BlendingModule):
     Simplest blending implementation possible. No constructor needed.
     """
 
-    # NOTE: To prevent CPU/GPU OOM, recommended to pass in 1 chunk at a time.
     def blend(self,
-              snowball_chunk,
               chunks: list[torch.Tensor],
               device: torch.device,
               kwargs = {}
@@ -58,11 +52,7 @@ class MaxProjection(BlendingModule):
         fused_chunk: combined chunk
         """
 
-        assert (
-            len(chunks) >= 1
-        ), f"Length of input list is {len(chunks)}, blending requires 2 or more chunks."
-
-        fused_chunk = torch.maximum(snowball_chunk.to(device), chunks[0].to(device))
+        fused_chunk = chunks[0].to(device)
         for c in chunks[1:]:
             c = c.to(device)
             fused_chunk = torch.maximum(fused_chunk, c)
@@ -70,10 +60,9 @@ class MaxProjection(BlendingModule):
         return fused_chunk
 
 
-class LinearBlending(BlendingModule):
+class SimpleAveraging(BlendingModule):
     """
     Simple average of the overlaping regions.
-    Uniform weight applied across entire overlapping region.
     """
 
     def __init__(self,
@@ -92,7 +81,7 @@ class LinearBlending(BlendingModule):
         |
         +y
         Inconsistent tile_layout with absolute tile coordinates
-        will result in error. 
+        will result in error.
 
         """
         self.tile_layout = tile_layout
@@ -157,7 +146,6 @@ class LinearBlending(BlendingModule):
         return overlap_aabb
 
     def blend(self,
-              snowball_chunk,
               chunks: list[torch.Tensor],
               device: torch.device,
               kwargs = {}
@@ -172,97 +160,344 @@ class LinearBlending(BlendingModule):
                 list of tile ids corresponding to each chunk
             cell_box:
                 cell AABB in output volume/absolute coordinates
-            num_tile_contributions:
-                Inverse of this defines common factor applied to all incoming chunks.
 
         Returns
         -------
         fused_chunk: combined chunk
         """
 
+        # Trivial no blending case -- non-overlaping region.
+        if len(chunks) == 1:
+            return chunks[0]
+
+        # For 2+ chunks, within an overlapping region:
         chunk_tile_ids = kwargs['chunk_tile_ids']
         cell_box = kwargs['cell_box']
 
-        to_blend: list[torch.Tensor] = []
-        for t_id, chunk in zip(chunk_tile_ids, chunks):
-            # Weight mask applied to chunk, initialized at all ones.
-            # All logic below is to determine what this weight map is!
-            net_chunk_mask = torch.ones(snowball_chunk.shape)
+        # 1) Derive occupancy maps
+        occupancy_maps = torch.zeros(chunks[0].shape)
+        for t_id in chunk_tile_ids:
+            # Define occupancy map.
+            # We will filter this to only pass occupancy within overlap region.
+            occupancy_map = torch.ones(chunks[0].shape)
 
             for o_id in self.tile_to_overlap_ids[t_id]:
+                # Find the overlapping region(s) that
+                # this chunk belongs to.
                 o_aabb = self.overlaps[o_id]
                 chunk_is_within_overlap = \
                 ((cell_box[1] > o_aabb[0] and cell_box[0] < o_aabb[1]) and \
                 (cell_box[3] > o_aabb[2] and cell_box[2] < o_aabb[3]) and \
                 (cell_box[5] > o_aabb[4] and cell_box[4] < o_aabb[5]))
-                if chunk_is_within_overlap:
-                    cell_aabb = np.array(cell_box).flatten()
-                    full_z_overlap = (cell_aabb[0] >= o_aabb[0] and
-                                      cell_aabb[1] <= o_aabb[1])
-                    full_y_overlap = (cell_aabb[2] >= o_aabb[2] and
-                                      cell_aabb[3] <= o_aabb[3])
-                    full_x_overlap = (cell_aabb[4] >= o_aabb[4] and
-                                      cell_aabb[5] <= o_aabb[5])
+                if not chunk_is_within_overlap:
+                    continue
 
-                    # Full occlusion: entire chunk_mask recieves 0.5 weight
-                    if full_z_overlap and full_y_overlap and full_x_overlap:
-                        net_chunk_mask *= 0.5
+                # Next, color count_map based on
+                # partial or full occulsion
+                cell_aabb = np.array(cell_box).flatten()
+                full_z_overlap = (cell_aabb[0] >= o_aabb[0] and
+                                    cell_aabb[1] <= o_aabb[1])
+                full_y_overlap = (cell_aabb[2] >= o_aabb[2] and
+                                    cell_aabb[3] <= o_aabb[3])
+                full_x_overlap = (cell_aabb[4] >= o_aabb[4] and
+                                    cell_aabb[5] <= o_aabb[5])
 
-                    # Partial occlusion: portion of net_chunk_mask recieves 0.5 weight
-                    else:
-                        partial_min_z_overlap = cell_aabb[0] < o_aabb[0]
-                        partial_min_y_overlap = cell_aabb[2] < o_aabb[2]
-                        partial_min_x_overlap = cell_aabb[4] < o_aabb[4]
+                # Full occlusion-- tile signal contributes to entire overlap region
+                if full_z_overlap and full_y_overlap and full_x_overlap:
+                    occupancy_map += 1
+                    break   # Full occupancy, move onto next tile.
 
-                        partial_max_z_overlap = o_aabb[1] < cell_aabb[1]
-                        partial_max_y_overlap = o_aabb[3] < cell_aabb[3]
-                        partial_max_x_overlap = o_aabb[5] < cell_aabb[5]
+                # Partial occulision-- tile signal contributes to portion of overlap region
+                else:
+                    partial_min_z_overlap = cell_aabb[0] < o_aabb[0]
+                    partial_min_y_overlap = cell_aabb[2] < o_aabb[2]
+                    partial_min_x_overlap = cell_aabb[4] < o_aabb[4]
 
-                        # Multiply other portions of net_chunk_mask by 0.5
-                        if not full_z_overlap:
-                            if partial_min_z_overlap:
-                                z_index = round(o_aabb[0] - cell_aabb[0])
-                                net_chunk_mask[0, 0, z_index:, :, :] = \
-                                    net_chunk_mask[0, 0, z_index:, :, :] * 0.5
+                    partial_max_z_overlap = o_aabb[1] < cell_aabb[1]
+                    partial_max_y_overlap = o_aabb[3] < cell_aabb[3]
+                    partial_max_x_overlap = o_aabb[5] < cell_aabb[5]
 
-                            if partial_max_z_overlap:
-                                z_index = round(o_aabb[1] - cell_aabb[0])
-                                net_chunk_mask[0, 0, :z_index, :, :] = \
-                                    net_chunk_mask[0, 0, :z_index, :, :] * 0.5
+                    signal_map = torch.zeros(chunks[0].shape)
+                    if not full_z_overlap:
+                        if partial_min_z_overlap:
+                            z_index = round(o_aabb[0] - cell_aabb[0])
+                            signal_map[0, 0, z_index:, :, :] += 1
 
-                        if not full_y_overlap:
-                            if partial_min_y_overlap:
-                                y_index = round(o_aabb[2] - cell_aabb[2])
-                                net_chunk_mask[0, 0, :, y_index:, :] = \
-                                    net_chunk_mask[0, 0, :, y_index:, :] * 0.5
+                        if partial_max_z_overlap:
+                            z_index = round(o_aabb[1] - cell_aabb[0])
+                            signal_map[0, 0, :z_index, :, :] += 1
 
-                            if partial_max_y_overlap:
-                                y_index = round(o_aabb[3] - cell_aabb[2])
-                                net_chunk_mask[0, 0, :, :y_index, :] = \
-                                    net_chunk_mask[0, 0, :, :y_index, :] * 0.5
+                    if not full_y_overlap:
+                        if partial_min_y_overlap:
+                            y_index = round(o_aabb[2] - cell_aabb[2])
+                            signal_map[0, 0, :, y_index:, :] += 1
 
-                        if not full_x_overlap:
-                            if partial_min_x_overlap:
-                                x_index = round(o_aabb[4] - cell_aabb[4])
-                                net_chunk_mask[0, 0, :, :, x_index:] = \
-                                    net_chunk_mask[0, 0, :, :, x_index:] * 0.5
+                        if partial_max_y_overlap:
+                            y_index = round(o_aabb[3] - cell_aabb[2])
+                            signal_map[0, 0, :, :y_index, :] += 1
 
-                            if partial_max_x_overlap:
-                                x_index = round(o_aabb[5] - cell_aabb[4])
-                                net_chunk_mask[0, 0, :, :, :x_index] = \
-                                    net_chunk_mask[0, 0, :, :, :x_index] * 0.5
+                    if not full_x_overlap:
+                        if partial_min_x_overlap:
+                            x_index = round(o_aabb[4] - cell_aabb[4])
+                            signal_map[0, 0, :, :, x_index:] += 1
 
-            # Apply weight map
-            masked_chunk = chunk * net_chunk_mask
-            to_blend.append(masked_chunk)
+                        if partial_max_x_overlap:
+                            x_index = round(o_aabb[5] - cell_aabb[4])
+                            signal_map[0, 0, :, :, :x_index] += 1
 
-        fused_chunk = snowball_chunk.to(device) + to_blend[0].to(device)
-        for c in to_blend[1:]:
-            c = c.to(device)
-            fused_chunk = fused_chunk + c
+                    occupancy_map *= signal_map
+
+            # End of loop through overlap regions
+            occupancy_maps.append(occupancy_map)
+
+        # 2) Post-process overlap map into weight map.
+        count_map = occupancy_maps[0]
+        for o in occupancy_maps:
+            count_map += o
+        count_map[count_map == 0] = 1
+        weight_map = 1. / count_map
+
+        # 3) Finally, blend all the chunks together.
+        weight_map = weight_map.to(device)
+        fused_chunk = chunks[0].to(device)
+        for c in chunks[1:]:
+            fused_chunk += (weight_map * c)
 
         return fused_chunk
 
+
+class WeightedLinearBlending(BlendingModule):
+    """
+    Linear Blending with distance-based weights.
+    """
+
+    def __init__(self,
+                 tile_layout: list[list[int]],
+                 tile_aabbs: dict[int, geometry.AABB]
+                 ) -> None:
+        super().__init__()
+        """
+        tile_layout: array of tile ids arranged corresponding to stage coordinates
+        tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
+
+        Important NOTE:
+        tile_layout follows axis convention:
+        +--- +x
+        |
+        |
+        +y
+        Inconsistent tile_layout with absolute tile coordinates
+        will result in error.
+
+        """
+        self.tile_layout = tile_layout
+        self.tile_aabbs = tile_aabbs
+
+        # Create mask data structures
+        # tile_to_overlap_ids: Maps tile_id to associated overlap region id
+        # overlaps: Maps overlap_id to actual overlap region AABB
+        # Access pattern:
+        # tile_id -> overlap_id -> overlaps
+        self.tile_to_overlap_ids: dict[int, list[int]] = defaultdict(list)
+        self.overlaps: dict[int, geometry.AABB] = {}
+
+        # directions basis: (i, j)
+        x_length = len(self.tile_layout)
+        y_length = len(self.tile_layout[0])
+        directions = [(-1, -1), (-1, 0), (-1, 1),
+                      (0, -1),         (0, 1),
+                      (1, -1), (1, 0), (1, 1)]
+        overlap_id = 0
+        for x in range(x_length):
+            for y in range(y_length):
+                for (dx, dy) in directions:
+                    nx = x + dx
+                    ny = y + dy
+                    if (0 <= nx and nx < x_length and
+                       0 <= ny and ny < y_length):
+
+                        c_id = self.tile_layout[x][y]
+                        c_aabb = self.tile_aabbs[c_id]
+                        n_id = self.tile_layout[nx][ny]
+                        n_aabb = self.tile_aabbs[n_id]
+                        o_aabb = self._get_overlap_aabb(c_aabb, n_aabb)
+                        self.tile_to_overlap_ids[c_id].append(overlap_id)
+                        self.overlaps[overlap_id] = o_aabb
+
+                        overlap_id += 1
+
+        # Define tile_centers for reference in conic weight function
+        self.tile_centers: dict[int, tuple[float, float, float]] = {}
+        for t_id, t_aabb in tile_aabbs:
+            mz, my, mx = (t_aabb[1] - t_aabb[0],
+                          t_aabb[3] - t_aabb[2],
+                          t_aabb[5] - t_aabb[4])
+            self.tile_centers[t_id] = (mz, my, mx)
+
+    def _get_overlap_aabb(self,
+                          aabb_1: geometry.AABB,
+                          aabb_2: geometry.AABB):
+        """
+        Utility for finding overlapping regions between tiles and chunks.
+        """
+
+        # Check AABB's are colliding, meaning they colllide in all 3 axes
+        assert (aabb_1[1] > aabb_2[0] and aabb_1[0] < aabb_2[1]) and \
+               (aabb_1[3] > aabb_2[2] and aabb_1[2] < aabb_2[3]) and \
+               (aabb_1[5] > aabb_2[4] and aabb_1[4] < aabb_2[5]), \
+               f'Input AABBs are not colliding: {aabb_1=}, {aabb_2=}'
+
+        # Between two colliding intervals A and B,
+        # the overlap interval is the maximum of (A_min, B_min)
+        # and the minimum of (A_max, B_max).
+        overlap_aabb = (np.max([aabb_1[0], aabb_2[0]]),
+                    np.min([aabb_1[1], aabb_2[1]]),
+                    np.max([aabb_1[2], aabb_2[2]]),
+                    np.min([aabb_1[3], aabb_2[3]]),
+                    np.max([aabb_1[4], aabb_2[4]]),
+                    np.min([aabb_1[5], aabb_2[5]]))
+
+        return overlap_aabb
+
+    def blend(self,
+              chunks: list[torch.Tensor],
+              device: torch.device,
+              kwargs = {}
+    ) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        snowball chunk: 5d tensor in 11zyx order
+        chunks: 5d tensor(s) in 11zyx order
+        kwargs:
+            chunk_tile_ids:
+                list of tile ids corresponding to each chunk
+            cell_box:
+                cell AABB in output volume/absolute coordinates
+
+        Returns
+        -------
+        fused_chunk: combined chunk
+        """
+
+        # Trivial no blending case -- non-overlaping region.
+        if len(chunks) == 1:
+            return chunks[0]
+
+        # For 2+ chunks, within an overlapping region:
+        chunk_tile_ids = kwargs['chunk_tile_ids']
+        cell_box = kwargs['cell_box']
+
+        # 1) Derive distance maps
+        total_distance_map = torch.zeros(chunks[0].shape)
+        distance_maps: list[torch.Tensor] = []  # Corresponding order as chunks
+        for t_id in chunk_tile_ids:
+            # Define distance map.
+            # Calculate distance of absolute coordinates wrt to current tile.
+            # We will filter this to only pass distances within the overlap region.
+            z_indices = torch.arange(cell_box[0], cell_box[1], step=1) + 0.5
+            y_indices = torch.arange(cell_box[2], cell_box[3], step=1) + 0.5
+            x_indices = torch.arange(cell_box[4], cell_box[5], step=1) + 0.5
+            cz, cy, cx = self.tile_centers[t_id]
+            z_indices = z_indices - cz
+            y_indices = y_indices - cy
+            x_indices = x_indices - cx
+            distance_map = (z_indices * z_indices) + \
+                        (y_indices * y_indices) + \
+                        (x_indices * x_indices)
+
+            for o_id in self.tile_to_overlap_ids[t_id]:
+                # Find the overlapping region(s) that
+                # this chunk belongs to.
+                o_aabb = self.overlaps[o_id]
+                chunk_is_within_overlap = \
+                ((cell_box[1] > o_aabb[0] and cell_box[0] < o_aabb[1]) and \
+                (cell_box[3] > o_aabb[2] and cell_box[2] < o_aabb[3]) and \
+                (cell_box[5] > o_aabb[4] and cell_box[4] < o_aabb[5]))
+                if not chunk_is_within_overlap:
+                    continue
+
+                # Next, mask the distance map according to
+                # actual signal in the overlap region.
+                cell_aabb = np.array(cell_box).flatten()
+                full_z_overlap = (cell_aabb[0] >= o_aabb[0] and
+                                    cell_aabb[1] <= o_aabb[1])
+                full_y_overlap = (cell_aabb[2] >= o_aabb[2] and
+                                    cell_aabb[3] <= o_aabb[3])
+                full_x_overlap = (cell_aabb[4] >= o_aabb[4] and
+                                    cell_aabb[5] <= o_aabb[5])
+
+                # Full occlusion-- tile signal contributes to entire overlap region
+                if full_z_overlap and full_y_overlap and full_x_overlap:
+                    break   # All distances lie in overlap region, move onto next tile.
+
+                # Partial occulision-- tile signal contributes to portion of overlap region
+                else:
+                    partial_min_z_overlap = cell_aabb[0] < o_aabb[0]
+                    partial_min_y_overlap = cell_aabb[2] < o_aabb[2]
+                    partial_min_x_overlap = cell_aabb[4] < o_aabb[4]
+
+                    partial_max_z_overlap = o_aabb[1] < cell_aabb[1]
+                    partial_max_y_overlap = o_aabb[3] < cell_aabb[3]
+                    partial_max_x_overlap = o_aabb[5] < cell_aabb[5]
+
+                    signal_map = torch.zeros(chunks[0].shape)
+                    if not full_z_overlap:
+                        if partial_min_z_overlap:
+                            z_index = round(o_aabb[0] - cell_aabb[0])
+                            signal_map[0, 0, z_index:, :, :] += 1
+
+                        if partial_max_z_overlap:
+                            z_index = round(o_aabb[1] - cell_aabb[0])
+                            signal_map[0, 0, :z_index, :, :] += 1
+
+                    if not full_y_overlap:
+                        if partial_min_y_overlap:
+                            y_index = round(o_aabb[2] - cell_aabb[2])
+                            signal_map[0, 0, :, y_index:, :] += 1
+
+                        if partial_max_y_overlap:
+                            y_index = round(o_aabb[3] - cell_aabb[2])
+                            signal_map[0, 0, :, :y_index, :] += 1
+
+                    if not full_x_overlap:
+                        if partial_min_x_overlap:
+                            x_index = round(o_aabb[4] - cell_aabb[4])
+                            signal_map[0, 0, :, :, x_index:] += 1
+
+                        if partial_max_x_overlap:
+                            x_index = round(o_aabb[5] - cell_aabb[4])
+                            signal_map[0, 0, :, :, :x_index] += 1
+
+                    distance_map *= signal_map  # Pass distance map through signal map
+
+            # End of loop through overlap regions
+            distance_maps.append(distance_map)
+            total_distance_map += distance_map
+
+        # 2) Post-process distance maps into weight maps
+        weight_maps = []
+        for d_map, c in zip(distance_maps, chunks):
+            weight_map = d_map / total_distance_map
+            weight_map[weight_map == 0] = 1
+            weight_maps.append(weight_map)
+
+        # 3) Finally, blend all the chunks together.
+        w = weight_maps[0].to(device)
+        fused_chunk = chunks[0].to(device)
+        fused_chunk *= w
+        for w, c in zip(weight_maps[1:], chunks[1:]):
+            w = w.to(device)
+            c = c.to(device)
+            fused_chunk += (w * c)
+
+        return fused_chunk
+
+
+# TODO
+# Refactor Main Loop
+# Write utility to get tile layout.
+# Automate another time.
 
 class MaskedBlending(BlendingModule):
     """
