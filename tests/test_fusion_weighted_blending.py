@@ -1,7 +1,7 @@
 """Test suite for fusion worker."""
-import shutil
 import unittest
 from pathlib import Path
+import shutil
 
 import numpy as np
 import zarr
@@ -29,7 +29,7 @@ class TestFusion(unittest.TestCase):
         # Application Object: RUNTIME PARAMS
         # Will define worker_cells at the end
         self.RUNTIME_PARAMS = io.RuntimeParameters(
-            option=1,
+            option=0,
             pool_size=16,
             worker_cells=[]
         )
@@ -85,8 +85,8 @@ class TestFusion(unittest.TestCase):
 
         # Set Blending parameters here
         tile_layout = [[0, 1]]
-        self.BLENDING_MODULE = blend.LinearBlending(tile_layout=tile_layout,
-                                                    tile_aabbs=tile_aabbs)
+        self.BLENDING_MODULE = blend.WeightedLinearBlending(tile_layout=tile_layout,
+                                                            tile_aabbs=tile_aabbs)
 
         fusion.run_fusion(DATASET,
                           OUTPUT_PARAMS,
@@ -130,8 +130,8 @@ class TestFusion(unittest.TestCase):
 
         tile_layout = [[0],
                        [1]]
-        self.BLENDING_MODULE = blend.LinearBlending(tile_layout=tile_layout,
-                                                    tile_aabbs=tile_aabbs)
+        self.BLENDING_MODULE = blend.WeightedLinearBlending(tile_layout=tile_layout,
+                                                            tile_aabbs=tile_aabbs)
 
         fusion.run_fusion(DATASET,
                           OUTPUT_PARAMS,

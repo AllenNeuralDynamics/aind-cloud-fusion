@@ -175,7 +175,7 @@ class SimpleAveraging(BlendingModule):
         cell_box = kwargs['cell_box']
 
         # 1) Derive occupancy maps
-        occupancy_maps = torch.zeros(chunks[0].shape)
+        occupancy_maps: list[torch.Tensor] = []
         for t_id in chunk_tile_ids:
             # Define occupancy map.
             # We will filter this to only pass occupancy within overlap region.
@@ -252,15 +252,15 @@ class SimpleAveraging(BlendingModule):
 
         # 2) Post-process overlap map into weight map.
         count_map = occupancy_maps[0]
-        for o in occupancy_maps:
+        for o in occupancy_maps[1:]:
             count_map += o
         count_map[count_map == 0] = 1
         weight_map = 1. / count_map
 
         # 3) Finally, blend all the chunks together.
+        fused_chunk = torch.zeros(chunks[0].shape)
         weight_map = weight_map.to(device)
-        fused_chunk = chunks[0].to(device)
-        for c in chunks[1:]:
+        for c in chunks:
             fused_chunk += (weight_map * c)
 
         return fused_chunk
@@ -328,7 +328,7 @@ class WeightedLinearBlending(BlendingModule):
 
         # Define tile_centers for reference in conic weight function
         self.tile_centers: dict[int, tuple[float, float, float]] = {}
-        for t_id, t_aabb in tile_aabbs:
+        for t_id, t_aabb in tile_aabbs.items():
             mz, my, mx = (t_aabb[1] - t_aabb[0],
                           t_aabb[3] - t_aabb[2],
                           t_aabb[5] - t_aabb[4])
@@ -398,13 +398,15 @@ class WeightedLinearBlending(BlendingModule):
             z_indices = torch.arange(cell_box[0], cell_box[1], step=1) + 0.5
             y_indices = torch.arange(cell_box[2], cell_box[3], step=1) + 0.5
             x_indices = torch.arange(cell_box[4], cell_box[5], step=1) + 0.5
+            z_grid, y_grid, x_grid = torch.meshgrid(
+                z_indices, y_indices, x_indices, indexing="ij"  # {z_grid, y_grid, x_grid} are 3D Tensors
+            )
             cz, cy, cx = self.tile_centers[t_id]
-            z_indices = z_indices - cz
-            y_indices = y_indices - cy
-            x_indices = x_indices - cx
-            distance_map = (z_indices * z_indices) + \
-                        (y_indices * y_indices) + \
-                        (x_indices * x_indices)
+            z_dist = torch.abs(z_grid - cz)
+            y_dist = torch.abs(y_grid - cy)
+            x_dist = torch.abs(x_grid - cx)
+            distance_map = 1 / (z_dist + y_dist + x_dist)  # Notion of distance decreases with distance from center
+            distance_map = distance_map.unsqueeze(0).unsqueeze(0)  # Now a 5D Tensor
 
             for o_id in self.tile_to_overlap_ids[t_id]:
                 # Find the overlapping region(s) that
@@ -479,25 +481,21 @@ class WeightedLinearBlending(BlendingModule):
         weight_maps = []
         for d_map, c in zip(distance_maps, chunks):
             weight_map = d_map / total_distance_map
-            weight_map[weight_map == 0] = 1
+            weight_map[d_map == 0] = 1
             weight_maps.append(weight_map)
 
         # 3) Finally, blend all the chunks together.
-        w = weight_maps[0].to(device)
-        fused_chunk = chunks[0].to(device)
-        fused_chunk *= w
-        for w, c in zip(weight_maps[1:], chunks[1:]):
+        fused_chunk = torch.zeros(chunks[0].shape)
+        for w, c in zip(weight_maps, chunks):
             w = w.to(device)
             c = c.to(device)
             fused_chunk += (w * c)
 
         return fused_chunk
 
-
-# TODO
-# Refactor Main Loop
-# Write utility to get tile layout.
-# Automate another time.
+# Immediate problem is why the weight map suprreses all signal outside overlap.
+# Appears like line 484 (or steps leading up to that) are not doing what is intended.
+# Dividing by 0! Let's fix that.
 
 class MaskedBlending(BlendingModule):
     """

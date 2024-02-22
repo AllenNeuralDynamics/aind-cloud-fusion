@@ -161,21 +161,21 @@ def generate_y_lin_blend_dataset() -> tuple[np.ndarray, io.Dataset]:
     x, y = img.shape
     stack_size = 400
 
-    ground_truth = np.zeros((x, stack_size, y))
+    ground_truth = np.zeros((stack_size, x, y))
 
     for i in range(stack_size):
-        ground_truth[:, i, :] = img
-    tile_1_zyx = ground_truth[:, :, : 3 * (x // 4)].copy()
-    tile_2_zyx = ground_truth[:, :, (x // 4) :].copy()
+        ground_truth[i, :, :] = img
+    tile_1_zyx = ground_truth[:, : 3 * (x // 4), :].copy()
+    tile_2_zyx = ground_truth[:, (x // 4) :, :].copy()
 
     # Erase some signal in the overlap region to test blending
     s = tile_1_zyx.shape[2]  # Split axis.
-    tile_1_zyx[:, :, (s // 2):] = tile_1_zyx[:, :, (s // 2):]
-    tile_2_zyx[:, :, 0:(s // 2)] = tile_2_zyx[:, :, 0:(s // 2)]
+    tile_1_zyx[:, (s // 2):, :] = tile_1_zyx[:, (s // 2):, :]
+    tile_2_zyx[:, 0:(s // 2), :] = tile_2_zyx[:, 0:(s // 2), :]
 
      # Registration matrix is (identity, translation = to tile cut).
     registration_zyx = np.array(
-        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, (x // 4)]]
+        [[1, 0, 0, 0], [0, 1, 0, (x // 4)], [0, 0, 1, 0]]
     )  # Split Axis
 
     input_resolution_zyx = (1.0, 1.0, 1.0)
@@ -199,17 +199,17 @@ def generate_x_lin_blend_dataset() -> tuple[np.ndarray, io.Dataset]:
     ground_truth = np.zeros((stack_size, x, y))
     for i in range(stack_size):
         ground_truth[i, :, :] = img
-    tile_1_zyx = ground_truth[:, : 3 * (x // 4), :].copy()
-    tile_2_zyx = ground_truth[:, (x // 4) :, :].copy()
+    tile_1_zyx = ground_truth[:, :, : 3 * (x // 4)].copy()
+    tile_2_zyx = ground_truth[:, :, (x // 4) :].copy()
 
     # Erase some signal in the overlap region to test blending
     s = tile_1_zyx.shape[1]  # Split axis.
-    tile_1_zyx[:, (s // 2):, :] = tile_1_zyx[:, (s // 2):, :]
-    tile_2_zyx[:, 0:(s // 2), :] = tile_2_zyx[:, 0:(s // 2), :]
+    tile_1_zyx[:, :, (s // 2):] = tile_1_zyx[:, :, (s // 2):]
+    tile_2_zyx[:, :, 0:(s // 2)] = tile_2_zyx[:, :, 0:(s // 2)]
 
     # Registration matrix is (identity, translation = to tile cut).
     registration_zyx = np.array(
-        [[1, 0, 0, 0], [0, 1, 0, (x // 4)], [0, 0, 1, 0]]  # Split axis
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, (x // 4)]]  # Split axis
     )
     input_resolution_zyx = (1.0, 1.0, 1.0)
 

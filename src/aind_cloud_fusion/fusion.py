@@ -500,12 +500,9 @@ def color_cell(
     # LOGGER.info(f"{cell_box=}")
     # LOGGER.info(f"{overlapping_tiles=}")
 
-    # Interpolation
-    z_length = cell_box[1] - cell_box[0]
-    y_length = cell_box[3] - cell_box[2]
-    x_length = cell_box[5] - cell_box[4]
-
-    fused_cell = torch.zeros((1, 1, z_length, y_length, x_length)).to(device)
+    # Interpolation for cell_contributions
+    cell_contributions: list[torch.Tensor] = []
+    cell_contribution_tile_ids: list[int] = []
     for tile_id in overlapping_tiles:
         # Init tile coords, arange end-exclusive, +0.5 to represent voxel center
         z_indices = torch.arange(cell_box[0], cell_box[1], step=1) + 0.5
@@ -632,22 +629,24 @@ def color_cell(
         image_crop = image_crop[(None,) * 2]
         tile_coords = torch.unsqueeze(tile_coords, 0)
 
-        # Interpolate and Fuse
+        # Interpolate and Store
         tile_contribution = torch.nn.functional.grid_sample(
             image_crop, tile_coords, padding_mode="zeros", mode="nearest", align_corners=False
         )
-        kwargs = {'chunk_tile_ids': [tile_id],
-                  'cell_box': cell_box}
 
-        fused_cell = blend_module.blend(
-            fused_cell,
-            [tile_contribution],
-            device,
-            kwargs
-        )
+        cell_contributions.append(tile_contribution)
+        cell_contribution_tile_ids.append(tile_id)
 
         del tile_coords
-        del tile_contribution
+
+    # Fuse all cell contributions together with specified blend module
+    fused_cell = blend_module.blend(
+        cell_contributions,
+        device,
+        kwargs={'chunk_tile_ids': cell_contribution_tile_ids,
+                'cell_box': cell_box}
+    )
+    cell_contributions = []
 
     # Write
     output_slice = (
@@ -661,20 +660,6 @@ def color_cell(
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
 
     output_volume[output_slice] = output_chunk
-
-    # Replace zarr write with dask's write b/c zarr's write has a hidden 'list objects' side effect.
-    # output_chunk = dask.array.from_array(output_chunk)
-    # da.store(
-    #     output_chunk,
-    #     output_volume,
-    #     regions=output_slice,
-    #     lock=False,
-    #     compute=True,
-    #     return_stored=False,
-    # )
-    # Actually, the 'list objects' performance hit was due to zarr write vs zarr append.
-    # Performing an operation to a dask array (even a trial one like this) inside of a dask delayed
-    # results in undetermined behavior.
 
     del fused_cell
     del output_chunk
