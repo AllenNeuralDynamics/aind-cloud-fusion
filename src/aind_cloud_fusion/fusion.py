@@ -640,14 +640,20 @@ def color_cell(
         del tile_coords
 
     # Fuse all cell contributions together with specified blend module
-    fused_cell = blend_module.blend(
-        cell_contributions,
-        device,
-        kwargs={'chunk_tile_ids': cell_contribution_tile_ids,
-                'cell_box': cell_box}
-    )
-    cell_contributions = []
-
+    fused_cell = torch.zeros((1, 
+                              1, 
+                              cell_box[1] - cell_box[0],
+                              cell_box[3] - cell_box[2],
+                              cell_box[5] - cell_box[4]))
+    if len(cell_contributions) != 0:
+        fused_cell = blend_module.blend(
+            cell_contributions,
+            device,
+            kwargs={'chunk_tile_ids': cell_contribution_tile_ids,
+                    'cell_box': cell_box}
+        )
+        cell_contributions = []
+    
     # Write
     output_slice = (
         slice(0, 1),
