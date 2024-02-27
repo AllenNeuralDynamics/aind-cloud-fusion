@@ -105,17 +105,23 @@ def initialize_fusion(
         int(global_tile_boundaries[5] - global_tile_boundaries[4]),
     ]
 
-    # Rounding up the OUTPUT_VOLUME_SIZE to the nearest chunk 
-    # b/c zarr-python has occasional errors writing at the boundaries. 
-    # This ensures a multiple of chunksize without losing data. 
-    OUTPUT_VOLUME_SIZE[0] -= OUTPUT_VOLUME_SIZE[0] % output_params.chunksize[2]
-    OUTPUT_VOLUME_SIZE[1] -= OUTPUT_VOLUME_SIZE[1] % output_params.chunksize[3]
-    OUTPUT_VOLUME_SIZE[2] -= OUTPUT_VOLUME_SIZE[2] % output_params.chunksize[4]
-    OUTPUT_VOLUME_SIZE[0] += output_params.chunksize[2]
-    OUTPUT_VOLUME_SIZE[1] += output_params.chunksize[3]
-    OUTPUT_VOLUME_SIZE[2] += output_params.chunksize[4]
+    # Rounding up the OUTPUT_VOLUME_SIZE to the nearest chunk
+    # b/c zarr-python has occasional errors writing at the boundaries.
+    # This ensures a multiple of chunksize without losing data.
+    remainder_0 = OUTPUT_VOLUME_SIZE[0] % output_params.chunksize[2]
+    remainder_1 = OUTPUT_VOLUME_SIZE[1] % output_params.chunksize[3]
+    remainder_2 = OUTPUT_VOLUME_SIZE[2] % output_params.chunksize[4]
+    if remainder_0 > 0:
+        OUTPUT_VOLUME_SIZE[0] -= remainder_0
+        OUTPUT_VOLUME_SIZE[0] += output_params.chunksize[2]
+    if remainder_1 > 0:
+        OUTPUT_VOLUME_SIZE[1] -= remainder_1
+        OUTPUT_VOLUME_SIZE[1] += output_params.chunksize[3]
+    if remainder_2 > 0:
+        OUTPUT_VOLUME_SIZE[2] -= remainder_2
+        OUTPUT_VOLUME_SIZE[2] += output_params.chunksize[4]
     OUTPUT_VOLUME_SIZE = tuple(OUTPUT_VOLUME_SIZE)
-    
+
     OUTPUT_VOLUME_ORIGIN = torch.Tensor(
         [
             torch.min(tile_boundary_point_cloud_zyx[:, 0]).item(),
@@ -402,7 +408,7 @@ def run_fusion(
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
         num_cells = len(runtime_params.worker_cells)
-        batch_size = 1000   # Good batch size for 128^3. 
+        batch_size = 1000   # Good batch size for 128^3.
         LOGGER.info(f'Coloring {num_cells} cells')
         LOGGER.info(f'Batch Size: {batch_size}')
 
@@ -651,8 +657,8 @@ def color_cell(
         del tile_coords
 
     # Fuse all cell contributions together with specified blend module
-    fused_cell = torch.zeros((1, 
-                              1, 
+    fused_cell = torch.zeros((1,
+                              1,
                               cell_box[1] - cell_box[0],
                               cell_box[3] - cell_box[2],
                               cell_box[5] - cell_box[4]))
@@ -664,7 +670,7 @@ def color_cell(
                     'cell_box': cell_box}
         )
         cell_contributions = []
-    
+
     # Write
     output_slice = (
         slice(0, 1),
@@ -675,7 +681,7 @@ def color_cell(
     )
     # Convert from float32 -> canonical uint16
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
-    
+
     output_volume[output_slice] = output_chunk
 
     del fused_cell

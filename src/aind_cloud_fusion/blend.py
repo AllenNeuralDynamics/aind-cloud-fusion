@@ -178,91 +178,111 @@ class SimpleAveraging(BlendingModule):
         cell_box = kwargs['cell_box']
 
         # 1) Derive occupancy maps
-        occupancy_maps: list[torch.Tensor] = []
+        occupancy_maps: dict[list[torch.Tensor]] = defaultdict(list)
         for t_id in chunk_tile_ids:
-            # Define occupancy map.
-            # We will filter this to only pass occupancy within overlap region.
-            occupancy_map = torch.ones(chunks[0].shape)
-
             for o_id in self.tile_to_overlap_ids[t_id]:
-                # Find the overlapping region(s) that
-                # this chunk belongs to.
+                # Each tile has potentially many overlap regions.
+                # Check if the current chunk is within the current overlap before proceeding.
                 o_aabb = self.overlaps[o_id]
-                chunk_is_within_overlap = \
-                ((cell_box[1] > o_aabb[0] and cell_box[0] < o_aabb[1]) and \
-                (cell_box[3] > o_aabb[2] and cell_box[2] < o_aabb[3]) and \
-                (cell_box[5] > o_aabb[4] and cell_box[4] < o_aabb[5]))
-                if not chunk_is_within_overlap:
+                chunk_outside_overlap_region = ((cell_box[1] <= o_aabb[0] or o_aabb[1] <= cell_box[0]) and
+                                                (cell_box[3] <= o_aabb[2] or o_aabb[3] <= cell_box[2]) and
+                                                (cell_box[5] <= o_aabb[4] or o_aabb[5] <= cell_box[4]))
+                if chunk_outside_overlap_region:
                     continue
 
-                # Next, color count_map based on
-                # partial or full occulsion
-                cell_aabb = np.array(cell_box).flatten()
-                full_z_overlap = (cell_aabb[0] >= o_aabb[0] and
-                                    cell_aabb[1] <= o_aabb[1])
-                full_y_overlap = (cell_aabb[2] >= o_aabb[2] and
-                                    cell_aabb[3] <= o_aabb[3])
-                full_x_overlap = (cell_aabb[4] >= o_aabb[4] and
-                                    cell_aabb[5] <= o_aabb[5])
+                # To be modified in the following colision checks.
+                occupancy_map = torch.zeros(chunks[0].shape)
+                MASK_SLICE = [slice(None), slice(None), slice(None), slice(None), slice(None)]
 
-                # Full occlusion-- tile signal contributes to entire overlap region
-                if full_z_overlap and full_y_overlap and full_x_overlap:
-                    occupancy_map += 1
-                    break   # Full occupancy, move onto next tile.
+                # Derive Occupancy Map for full chunk coverings in each dimension
+                # chunk: (---)
+                # overlap: [---]
+                # Ex: (---[-----]---)
+                chunk_covers_overlap_z = (cell_box[0] < o_aabb[0] and o_aabb[1] < cell_box[1])
+                chunk_covers_overlap_y = (cell_box[2] < o_aabb[2] and o_aabb[3] < cell_box[3])
+                chunk_covers_overlap_x = (cell_box[4] < o_aabb[4] and o_aabb[5] < cell_box[5])
+                if chunk_covers_overlap_z:
+                    start_index = round(o_aabb[0] - cell_box[0])
+                    end_index = round(o_aabb[1] - cell_box[0])
+                    MASK_SLICE[2] = slice(start_index, end_index)
 
-                # Partial occulision-- tile signal contributes to portion of overlap region
-                else:
-                    partial_min_z_overlap = cell_aabb[0] < o_aabb[0]
-                    partial_min_y_overlap = cell_aabb[2] < o_aabb[2]
-                    partial_min_x_overlap = cell_aabb[4] < o_aabb[4]
+                if chunk_covers_overlap_y:
+                    start_index = round(o_aabb[2] - cell_box[2])
+                    end_index = round(o_aabb[3] - cell_box[2])
+                    MASK_SLICE[3] = slice(start_index, end_index)
 
-                    partial_max_z_overlap = o_aabb[1] < cell_aabb[1]
-                    partial_max_y_overlap = o_aabb[3] < cell_aabb[3]
-                    partial_max_x_overlap = o_aabb[5] < cell_aabb[5]
+                if chunk_covers_overlap_x:
+                    start_index = round(o_aabb[4] - cell_box[4])
+                    end_index = round(o_aabb[5] - cell_box[4])
+                    MASK_SLICE[4] = slice(start_index, end_index)
 
-                    signal_map = torch.zeros(chunks[0].shape)
-                    if not full_z_overlap:
-                        if partial_min_z_overlap:
-                            start_index = round(o_aabb[0] - cell_aabb[0])
-                            end_index = round(min(cell_aabb[1], o_aabb[1]) - cell_aabb[0])
-                            signal_map[0, 0, start_index:end_index, :, :] += 1
+                # Derive Occupancy Map for full overlap coverings in each dimension
+                # chunk: (---)
+                # overlap: [---]
+                # Ex: [---(-----)---]
+                overlap_covers_chunk_z = (o_aabb[0] <= cell_box[0] and cell_box[1] <= o_aabb[1])
+                overlap_covers_chunk_y = (o_aabb[2] <= cell_box[2] and cell_box[3] <= o_aabb[3])
+                overlap_covers_chunk_x = (o_aabb[4] <= cell_box[4] and cell_box[5] <= o_aabb[5])
+                if overlap_covers_chunk_z:
+                    MASK_SLICE[2] = slice(None)
+                if overlap_covers_chunk_y:
+                    MASK_SLICE[3] = slice(None)
+                if overlap_covers_chunk_x:
+                    MASK_SLICE[4] = slice(None)
 
-                        if partial_max_z_overlap:
-                            start_index = round(max(cell_aabb[0], o_aabb[0]) - cell_aabb[0])
-                            end_index = round(o_aabb[1] - cell_aabb[0])
-                            signal_map[0, 0, start_index:end_index, :, :] += 1
+                # Derive Occupancy Map for partial chunk coverings in each dimension
+                # chunk: (---)
+                # overlap: [---]
+                # Ex: (---[------)---] or [---(-----]--)
+                chunk_covers_min_overlap_z = (cell_box[0] < o_aabb[0] and
+                                              o_aabb[0] < cell_box[1] and cell_box[1] <= o_aabb[1])
+                chunk_covers_min_overlap_y = (cell_box[2] < o_aabb[2] and
+                                              o_aabb[2] < cell_box[3] and cell_box[3] <= o_aabb[3])
+                chunk_covers_min_overlap_x = (cell_box[4] < o_aabb[4] and
+                                              o_aabb[4] < cell_box[5] and cell_box[5] <= o_aabb[5])
+                if chunk_covers_min_overlap_z:
+                    start_index = round(o_aabb[0] - cell_box[0])
+                    MASK_SLICE[2] = slice(start_index, None)
+                if chunk_covers_min_overlap_y:
+                    start_index = round(o_aabb[2] - cell_box[2])
+                    MASK_SLICE[3] = slice(start_index, None)
+                if chunk_covers_min_overlap_x:
+                    start_index = round(o_aabb[4] - cell_box[4])
+                    MASK_SLICE[4] = slice(start_index, None)
 
-                    if not full_y_overlap:
-                        if partial_min_y_overlap:
-                            start_index = round(o_aabb[2] - cell_aabb[2])
-                            end_index = round(min(cell_aabb[3], o_aabb[3]) - cell_aabb[2])
-                            signal_map[0, 0, :, start_index:end_index, :] += 1
+                chunk_covers_max_overlap_z = (o_aabb[0] <= cell_box[0] and cell_box[0] < o_aabb[1] and
+                                              o_aabb[1] < cell_box[1])
+                chunk_covers_max_overlap_y = (o_aabb[2] <= cell_box[2] and cell_box[2] < o_aabb[3] and
+                                              o_aabb[3] < cell_box[3])
+                chunk_covers_max_overlap_x = (o_aabb[4] <= cell_box[4] and cell_box[4] < o_aabb[5] and
+                                              o_aabb[5] < cell_box[5])
+                if chunk_covers_max_overlap_z:
+                    end_index = round(o_aabb[1] - cell_box[0])
+                    MASK_SLICE[2] = slice(0, end_index)
+                if chunk_covers_max_overlap_y:
+                    end_index = round(o_aabb[3] - cell_box[2])
+                    MASK_SLICE[3] = slice(0, end_index)
+                if chunk_covers_max_overlap_x:
+                    end_index = round(o_aabb[5] - cell_box[4])
+                    MASK_SLICE[4] = slice(0, end_index)
 
-                        if partial_max_y_overlap:
-                            start_index = round(max(cell_aabb[2], o_aabb[2]) - cell_aabb[2])
-                            end_index = round(o_aabb[3] - cell_aabb[2])
-                            signal_map[0, 0, :, start_index:end_index, :] += 1
+                occupancy_map[MASK_SLICE] = 1
+                occupancy_maps[t_id].append(occupancy_map)
 
-                    if not full_x_overlap:
-                        if partial_min_x_overlap:
-                            start_index = round(o_aabb[4] - cell_aabb[4])
-                            end_index = round(min(cell_aabb[5], o_aabb[5]) - cell_aabb[4])
-                            signal_map[0, 0, :, :, start_index:end_index] += 1
+        # 2) Post-process occupancy maps into weight map.
+        count_map = torch.zeros(chunks[0].shape)
+        for t_id, t_maps in occupancy_maps.items():
+            # Logical-OR occupancy maps at tile level
+            net_occupancy_map = torch.zeros(chunks[0].shape)
+            for t_map in t_maps:
+                net_occupancy_map += t_map
+            net_occupancy_map[net_occupancy_map > 1] = 1
 
-                        if partial_max_x_overlap:
-                            start_index = round(max(cell_aabb[4], o_aabb[4]) - cell_aabb[4])
-                            end_index = round(o_aabb[5] - cell_aabb[4])
-                            signal_map[0, 0, :, :, start_index:end_index] += 1
+            # Accumulate net_occupancy maps into count_map
+            count_map += net_occupancy_map
 
-                    occupancy_map *= signal_map
-
-            # End of loop through overlap regions
-            occupancy_maps.append(occupancy_map)
-
-        # 2) Post-process overlap map into weight map.
-        count_map = occupancy_maps[0]
-        for o in occupancy_maps[1:]:
-            count_map += o
+        # Pass full signal to unmasked regions
+        # Masked regions recieve 1/num_tiles weight.
         count_map[count_map == 0] = 1
         weight_map = 1. / count_map
 
@@ -400,13 +420,109 @@ class WeightedLinearBlending(BlendingModule):
         chunk_tile_ids = kwargs['chunk_tile_ids']
         cell_box = kwargs['cell_box']
 
-        # 1) Derive distance maps
-        total_distance_map = torch.zeros(chunks[0].shape)
-        distance_maps: list[torch.Tensor] = []  # Corresponding order as chunks
+        # 1) Derive occupancy maps
+        occupancy_maps: dict[list[torch.Tensor]] = defaultdict(list)
         for t_id in chunk_tile_ids:
-            # Define distance map.
-            # Calculate distance of absolute coordinates wrt to current tile.
-            # We will filter this to only pass distances within the overlap region.
+            for o_id in self.tile_to_overlap_ids[t_id]:
+                # Each tile has potentially many overlap regions.
+                # Check if the current chunk is within the current overlap before proceeding.
+                o_aabb = self.overlaps[o_id]
+                chunk_outside_overlap_region = ((cell_box[1] <= o_aabb[0] or o_aabb[1] <= cell_box[0]) and
+                                                (cell_box[3] <= o_aabb[2] or o_aabb[3] <= cell_box[2]) and
+                                                (cell_box[5] <= o_aabb[4] or o_aabb[5] <= cell_box[4]))
+                if chunk_outside_overlap_region:
+                    continue
+
+                # To be modified in the following colision checks.
+                occupancy_map = torch.zeros(chunks[0].shape)
+                MASK_SLICE = [slice(None), slice(None), slice(None), slice(None), slice(None)]
+
+                # Derive Occupancy Map for full chunk coverings in each dimension
+                # chunk: (---)
+                # overlap: [---]
+                # Ex: (---[-----]---)
+                chunk_covers_overlap_z = (cell_box[0] < o_aabb[0] and o_aabb[1] < cell_box[1])
+                chunk_covers_overlap_y = (cell_box[2] < o_aabb[2] and o_aabb[3] < cell_box[3])
+                chunk_covers_overlap_x = (cell_box[4] < o_aabb[4] and o_aabb[5] < cell_box[5])
+                if chunk_covers_overlap_z:
+                    start_index = round(o_aabb[0] - cell_box[0])
+                    end_index = round(o_aabb[1] - cell_box[0])
+                    MASK_SLICE[2] = slice(start_index, end_index)
+
+                if chunk_covers_overlap_y:
+                    start_index = round(o_aabb[2] - cell_box[2])
+                    end_index = round(o_aabb[3] - cell_box[2])
+                    MASK_SLICE[3] = slice(start_index, end_index)
+
+                if chunk_covers_overlap_x:
+                    start_index = round(o_aabb[4] - cell_box[4])
+                    end_index = round(o_aabb[5] - cell_box[4])
+                    MASK_SLICE[4] = slice(start_index, end_index)
+
+                # Derive Occupancy Map for full overlap coverings in each dimension
+                # chunk: (---)
+                # overlap: [---]
+                # Ex: [---(-----)---]
+                overlap_covers_chunk_z = (o_aabb[0] <= cell_box[0] and cell_box[1] <= o_aabb[1])
+                overlap_covers_chunk_y = (o_aabb[2] <= cell_box[2] and cell_box[3] <= o_aabb[3])
+                overlap_covers_chunk_x = (o_aabb[4] <= cell_box[4] and cell_box[5] <= o_aabb[5])
+                if overlap_covers_chunk_z:
+                    MASK_SLICE[2] = slice(None)
+                if overlap_covers_chunk_y:
+                    MASK_SLICE[3] = slice(None)
+                if overlap_covers_chunk_x:
+                    MASK_SLICE[4] = slice(None)
+
+                # Derive Occupancy Map for partial chunk coverings in each dimension
+                # chunk: (---)
+                # overlap: [---]
+                # Ex: (---[------)---] or [---(-----]--)
+                chunk_covers_min_overlap_z = (cell_box[0] < o_aabb[0] and
+                                              o_aabb[0] < cell_box[1] and cell_box[1] <= o_aabb[1])
+                chunk_covers_min_overlap_y = (cell_box[2] < o_aabb[2] and
+                                              o_aabb[2] < cell_box[3] and cell_box[3] <= o_aabb[3])
+                chunk_covers_min_overlap_x = (cell_box[4] < o_aabb[4] and
+                                              o_aabb[4] < cell_box[5] and cell_box[5] <= o_aabb[5])
+                if chunk_covers_min_overlap_z:
+                    start_index = round(o_aabb[0] - cell_box[0])
+                    MASK_SLICE[2] = slice(start_index, None)
+                if chunk_covers_min_overlap_y:
+                    start_index = round(o_aabb[2] - cell_box[2])
+                    MASK_SLICE[3] = slice(start_index, None)
+                if chunk_covers_min_overlap_x:
+                    start_index = round(o_aabb[4] - cell_box[4])
+                    MASK_SLICE[4] = slice(start_index, None)
+
+                chunk_covers_max_overlap_z = (o_aabb[0] <= cell_box[0] and cell_box[0] < o_aabb[1] and
+                                              o_aabb[1] < cell_box[1])
+                chunk_covers_max_overlap_y = (o_aabb[2] <= cell_box[2] and cell_box[2] < o_aabb[3] and
+                                              o_aabb[3] < cell_box[3])
+                chunk_covers_max_overlap_x = (o_aabb[4] <= cell_box[4] and cell_box[4] < o_aabb[5] and
+                                              o_aabb[5] < cell_box[5])
+                if chunk_covers_max_overlap_z:
+                    end_index = round(o_aabb[1] - cell_box[0])
+                    MASK_SLICE[2] = slice(0, end_index)
+                if chunk_covers_max_overlap_y:
+                    end_index = round(o_aabb[3] - cell_box[2])
+                    MASK_SLICE[3] = slice(0, end_index)
+                if chunk_covers_max_overlap_x:
+                    end_index = round(o_aabb[5] - cell_box[4])
+                    MASK_SLICE[4] = slice(0, end_index)
+
+                occupancy_map[MASK_SLICE] = 1
+                occupancy_maps[t_id].append(occupancy_map)
+
+        # 2) Post-process occupancy maps into weight maps
+        per_chunk_distance_maps: list[torch.Tensor] = []
+        total_distance_map = torch.zeros(chunks[0].shape)
+        for t_id, t_maps in occupancy_maps.items():
+            # Logical-OR occupancy maps at tile level
+            net_occupancy_map = torch.zeros(chunks[0].shape)
+            for t_map in t_maps:
+                net_occupancy_map += t_map
+            net_occupancy_map[net_occupancy_map > 1] = 1
+
+            # Each tile gets its own distance map
             z_indices = torch.arange(cell_box[0], cell_box[1], step=1) + 0.5
             y_indices = torch.arange(cell_box[2], cell_box[3], step=1) + 0.5
             x_indices = torch.arange(cell_box[4], cell_box[5], step=1) + 0.5
@@ -420,84 +536,12 @@ class WeightedLinearBlending(BlendingModule):
             distance_map = 1 / (z_dist + y_dist + x_dist)  # Notion of distance decreases with distance from center
             distance_map = distance_map.unsqueeze(0).unsqueeze(0)  # Now a 5D Tensor
 
-            for o_id in self.tile_to_overlap_ids[t_id]:
-                # Find the overlapping region(s) that
-                # this chunk belongs to.
-                o_aabb = self.overlaps[o_id]
-                chunk_is_within_overlap = \
-                ((cell_box[1] > o_aabb[0] and cell_box[0] < o_aabb[1]) and \
-                (cell_box[3] > o_aabb[2] and cell_box[2] < o_aabb[3]) and \
-                (cell_box[5] > o_aabb[4] and cell_box[4] < o_aabb[5]))
-                if not chunk_is_within_overlap:
-                    continue
+            per_chunk_distance = distance_map * net_occupancy_map
+            total_distance_map += per_chunk_distance
+            per_chunk_distance_maps.append(per_chunk_distance)
 
-                # Next, mask the distance map according to
-                # actual signal in the overlap region.
-                cell_aabb = np.array(cell_box).flatten()
-                full_z_overlap = (cell_aabb[0] >= o_aabb[0] and
-                                    cell_aabb[1] <= o_aabb[1])
-                full_y_overlap = (cell_aabb[2] >= o_aabb[2] and
-                                    cell_aabb[3] <= o_aabb[3])
-                full_x_overlap = (cell_aabb[4] >= o_aabb[4] and
-                                    cell_aabb[5] <= o_aabb[5])
-
-                # Full occlusion-- tile signal contributes to entire overlap region
-                if full_z_overlap and full_y_overlap and full_x_overlap:
-                    break   # All distances lie in overlap region, move onto next tile.
-
-                # Partial occulision-- tile signal contributes to portion of overlap region
-                else:
-                    partial_min_z_overlap = cell_aabb[0] < o_aabb[0]
-                    partial_min_y_overlap = cell_aabb[2] < o_aabb[2]
-                    partial_min_x_overlap = cell_aabb[4] < o_aabb[4]
-
-                    partial_max_z_overlap = o_aabb[1] < cell_aabb[1]
-                    partial_max_y_overlap = o_aabb[3] < cell_aabb[3]
-                    partial_max_x_overlap = o_aabb[5] < cell_aabb[5]
-
-                    signal_map = torch.zeros(chunks[0].shape)
-                    if not full_z_overlap:
-                        if partial_min_z_overlap:
-                            start_index = round(o_aabb[0] - cell_aabb[0])
-                            end_index = round(min(cell_aabb[1], o_aabb[1]) - cell_aabb[0])
-                            signal_map[0, 0, start_index:end_index, :, :] += 1
-
-                        if partial_max_z_overlap:
-                            start_index = round(max(cell_aabb[0], o_aabb[0]) - cell_aabb[0])
-                            end_index = round(o_aabb[1] - cell_aabb[0])
-                            signal_map[0, 0, start_index:end_index, :, :] += 1
-
-                    if not full_y_overlap:
-                        if partial_min_y_overlap:
-                            start_index = round(o_aabb[2] - cell_aabb[2])
-                            end_index = round(min(cell_aabb[3], o_aabb[3]) - cell_aabb[2])
-                            signal_map[0, 0, :, start_index:end_index, :] += 1
-
-                        if partial_max_y_overlap:
-                            start_index = round(max(cell_aabb[2], o_aabb[2]) - cell_aabb[2])
-                            end_index = round(o_aabb[3] - cell_aabb[2])
-                            signal_map[0, 0, :, start_index:end_index, :] += 1
-
-                    if not full_x_overlap:
-                        if partial_min_x_overlap:
-                            start_index = round(o_aabb[4] - cell_aabb[4])
-                            end_index = round(min(cell_aabb[5], o_aabb[5]) - cell_aabb[4])
-                            signal_map[0, 0, :, :, start_index:end_index] += 1
-
-                        if partial_max_x_overlap:
-                            start_index = round(max(cell_aabb[4], o_aabb[4]) - cell_aabb[4])
-                            end_index = round(o_aabb[5] - cell_aabb[4])
-                            signal_map[0, 0, :, :, start_index:end_index] += 1
-
-                    distance_map *= signal_map  # Pass distance map through signal map
-
-            # End of loop through overlap regions
-            distance_maps.append(distance_map)
-            total_distance_map += distance_map
-
-        # 2) Post-process distance maps into weight maps
-        weight_maps = []
-        for d_map, c in zip(distance_maps, chunks):
+        weight_maps: list[torch.Tensor] = []
+        for d_map, c in zip(per_chunk_distance_maps, chunks):
             weight_map = d_map / total_distance_map
             weight_map[d_map == 0] = 1
             weight_maps.append(weight_map)
