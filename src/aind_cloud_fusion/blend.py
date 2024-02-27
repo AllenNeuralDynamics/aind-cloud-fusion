@@ -223,30 +223,36 @@ class SimpleAveraging(BlendingModule):
                     signal_map = torch.zeros(chunks[0].shape)
                     if not full_z_overlap:
                         if partial_min_z_overlap:
-                            z_index = round(o_aabb[0] - cell_aabb[0])
-                            signal_map[0, 0, z_index:, :, :] += 1
+                            start_index = round(o_aabb[0] - cell_aabb[0])
+                            end_index = round(min(cell_aabb[1], o_aabb[1]) - cell_aabb[0])
+                            signal_map[0, 0, start_index:end_index, :, :] += 1
 
                         if partial_max_z_overlap:
-                            z_index = round(o_aabb[1] - cell_aabb[0])
-                            signal_map[0, 0, :z_index, :, :] += 1
+                            start_index = round(max(cell_aabb[0], o_aabb[0]) - cell_aabb[0])
+                            end_index = round(o_aabb[1] - cell_aabb[0])
+                            signal_map[0, 0, start_index:end_index, :, :] += 1
 
                     if not full_y_overlap:
                         if partial_min_y_overlap:
-                            y_index = round(o_aabb[2] - cell_aabb[2])
-                            signal_map[0, 0, :, y_index:, :] += 1
+                            start_index = round(o_aabb[2] - cell_aabb[2])
+                            end_index = round(min(cell_aabb[3], o_aabb[3]) - cell_aabb[2])
+                            signal_map[0, 0, :, start_index:end_index, :] += 1
 
                         if partial_max_y_overlap:
-                            y_index = round(o_aabb[3] - cell_aabb[2])
-                            signal_map[0, 0, :, :y_index, :] += 1
+                            start_index = round(max(cell_aabb[2], o_aabb[2]) - cell_aabb[2])
+                            end_index = round(o_aabb[3] - cell_aabb[2])
+                            signal_map[0, 0, :, start_index:end_index, :] += 1
 
                     if not full_x_overlap:
                         if partial_min_x_overlap:
-                            x_index = round(o_aabb[4] - cell_aabb[4])
-                            signal_map[0, 0, :, :, x_index:] += 1
+                            start_index = round(o_aabb[4] - cell_aabb[4])
+                            end_index = round(min(cell_aabb[5], o_aabb[5]) - cell_aabb[4])
+                            signal_map[0, 0, :, :, start_index:end_index] += 1
 
                         if partial_max_x_overlap:
-                            x_index = round(o_aabb[5] - cell_aabb[4])
-                            signal_map[0, 0, :, :, :x_index] += 1
+                            start_index = round(max(cell_aabb[4], o_aabb[4]) - cell_aabb[4])
+                            end_index = round(o_aabb[5] - cell_aabb[4])
+                            signal_map[0, 0, :, :, start_index:end_index] += 1
 
                     occupancy_map *= signal_map
 
@@ -452,30 +458,36 @@ class WeightedLinearBlending(BlendingModule):
                     signal_map = torch.zeros(chunks[0].shape)
                     if not full_z_overlap:
                         if partial_min_z_overlap:
-                            z_index = round(o_aabb[0] - cell_aabb[0])
-                            signal_map[0, 0, z_index:, :, :] += 1
+                            start_index = round(o_aabb[0] - cell_aabb[0])
+                            end_index = round(min(cell_aabb[1], o_aabb[1]) - cell_aabb[0])
+                            signal_map[0, 0, start_index:end_index, :, :] += 1
 
                         if partial_max_z_overlap:
-                            z_index = round(o_aabb[1] - cell_aabb[0])
-                            signal_map[0, 0, :z_index, :, :] += 1
+                            start_index = round(max(cell_aabb[0], o_aabb[0]) - cell_aabb[0])
+                            end_index = round(o_aabb[1] - cell_aabb[0])
+                            signal_map[0, 0, start_index:end_index, :, :] += 1
 
                     if not full_y_overlap:
                         if partial_min_y_overlap:
-                            y_index = round(o_aabb[2] - cell_aabb[2])
-                            signal_map[0, 0, :, y_index:, :] += 1
+                            start_index = round(o_aabb[2] - cell_aabb[2])
+                            end_index = round(min(cell_aabb[3], o_aabb[3]) - cell_aabb[2])
+                            signal_map[0, 0, :, start_index:end_index, :] += 1
 
                         if partial_max_y_overlap:
-                            y_index = round(o_aabb[3] - cell_aabb[2])
-                            signal_map[0, 0, :, :y_index, :] += 1
+                            start_index = round(max(cell_aabb[2], o_aabb[2]) - cell_aabb[2])
+                            end_index = round(o_aabb[3] - cell_aabb[2])
+                            signal_map[0, 0, :, start_index:end_index, :] += 1
 
                     if not full_x_overlap:
                         if partial_min_x_overlap:
-                            x_index = round(o_aabb[4] - cell_aabb[4])
-                            signal_map[0, 0, :, :, x_index:] += 1
+                            start_index = round(o_aabb[4] - cell_aabb[4])
+                            end_index = round(min(cell_aabb[5], o_aabb[5]) - cell_aabb[4])
+                            signal_map[0, 0, :, :, start_index:end_index] += 1
 
                         if partial_max_x_overlap:
-                            x_index = round(o_aabb[5] - cell_aabb[4])
-                            signal_map[0, 0, :, :, :x_index] += 1
+                            start_index = round(max(cell_aabb[4], o_aabb[4]) - cell_aabb[4])
+                            end_index = round(o_aabb[5] - cell_aabb[4])
+                            signal_map[0, 0, :, :, start_index:end_index] += 1
 
                     distance_map *= signal_map  # Pass distance map through signal map
 

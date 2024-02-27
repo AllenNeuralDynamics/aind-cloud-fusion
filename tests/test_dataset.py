@@ -5,6 +5,11 @@ from PIL import Image
 import aind_cloud_fusion.geometry as geometry
 import aind_cloud_fusion.io as io
 
+"""
+All Datasets follow the same format with the following metadata:
+200x200 image stacked to 400 in 3rd dimension.
+Each image is 150x200 with a 50 pixel overlap.
+"""
 
 class TestDataset(io.Dataset):
     """
