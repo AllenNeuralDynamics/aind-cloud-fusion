@@ -21,10 +21,10 @@ dependencies = [
     'numpy==1.26.1',
     'nptyping==2.5.0',
     'zarr==2.16.1',
-    's3fs==2023.9.2', 
-    'dask[distributed]==2024.1.0',
-    'Pillow==10.1.0', 
-    'boto3',
+    's3fs==2023.9.2',
+    'dask==2024.1.0',
+    'Pillow==10.1.0',
+    'boto3'
 ]
 
 [project.optional-dependencies]

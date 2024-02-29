@@ -72,6 +72,7 @@ def initialize_fusion(
 
     for tile_id, tile_arr in tile_arrays.items():
         tile_sizes_zyx[tile_id] = zyx = tile_arr.shape[2:]
+        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape[2:]
         tile_boundaries = torch.Tensor(
             [
                 [0.0, 0.0, 0.0],
@@ -168,15 +169,11 @@ def initialize_output_volume(
     Zarr thread-safe datastore initialized on OutputParameters.
     """
 
-    # Local path for testing:
-    if not output_params.path.startswith('s3'):
-        out_group = zarr.open(output_params.path)
+    # Local execution
+    out_group = zarr.open_group(output_params.path, mode="w")
 
-    else:
-        # Default s3 cloud execution
-        # MODE = 'a'
-        # Create zarr store if it does not exist, otherwise, use the existing
-        # zarr store. MODE = 'w' is WRONG-- zarr traverses every file inside the zarr volume to do some overwrite operation-- which is incredibly slow.
+    # Cloud execuion
+    if output_params.path.startswith('s3'):
         s3 = s3fs.S3FileSystem(
             config_kwargs={
                 'max_pool_connections': 50,
@@ -228,6 +225,13 @@ def get_cell_count_zyx(
     z_cnt = int(np.ceil(output_volume_size[0] / cell_size[0]))
     y_cnt = int(np.ceil(output_volume_size[1] / cell_size[1]))
     x_cnt = int(np.ceil(output_volume_size[2] / cell_size[2]))
+
+    # Zarr struggles with writing boundary chunks
+    # This is definitely a zarr library bug.
+    # Solution: simply do not write the boundary chunks
+    z_cnt = z_cnt - 1
+    y_cnt = y_cnt - 1
+    x_cnt = x_cnt - 1
 
     return z_cnt, y_cnt, x_cnt
 
@@ -313,9 +317,9 @@ def run_fusion(
 
         # Important for prevent running out of resources
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
-        torch.multiprocessing.set_sharing_strategy('file_system')
 
-        # Fill work queue (active processes) with inital tasks
+        # Run Fusion: Fill work queue (active processes) with inital tasks
+        # Task-specific info includes process_args and device.
         start_run = time.time()
         active_processes: list[
             tuple
@@ -503,6 +507,7 @@ def color_cell(
     cell_box[:, 1] = np.minimum(
         cell_box[:, 1], np.array(output_volume_size[2:])
     )
+
     cell_box = cell_box.flatten()
 
     # Collision Detection
@@ -684,7 +689,6 @@ def color_cell(
     )
     # Convert from float32 -> canonical uint16
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
-
     output_volume[output_slice] = output_chunk
 
     del fused_cell
