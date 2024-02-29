@@ -335,6 +335,14 @@ class WeightedLinearBlending(BlendingModule):
         self.overlaps: dict[int, geometry.AABB] = {}
         self.tile_to_overlap_ids, self.overlaps = get_overlap_regions(tile_layout, tile_aabbs)
 
+        # Define tile_centers for reference in conic weight function
+        self.tile_centers: dict[int, tuple[float, float, float]] = {}
+        for t_id, t_aabb in tile_aabbs.items():
+            mz, my, mx = (t_aabb[1] - t_aabb[0],
+                          t_aabb[3] - t_aabb[2],
+                          t_aabb[5] - t_aabb[4])
+            self.tile_centers[t_id] = (mz, my, mx)
+
     def blend(self,
               chunks: list[torch.Tensor],
               device: torch.device,
