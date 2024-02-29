@@ -61,70 +61,24 @@ class MaxProjection(BlendingModule):
         return fused_chunk
 
 
-class SimpleAveraging(BlendingModule):
+def get_overlap_regions(tile_layout: list[list[int]],
+                        tile_aabbs: dict[int, geometry.AABB]
+                        ) -> tuple[dict[int, list[int]], 
+                                   dict[int, geometry.AABB]]:
     """
-    Simple average of the overlaping regions.
+    Input: 
+    tile_layout: array of tile ids arranged corresponding to stage coordinates
+    tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
+    
+    Output: 
+    tile_to_overlap_ids: Maps tile_id to associated overlap region id
+    overlaps: Maps overlap_id to actual overlap region AABB
+    
+    Access pattern:
+    tile_id -> overlap_id -> overlaps
     """
 
-    def __init__(self,
-                 tile_layout: list[list[int]],
-                 tile_aabbs: dict[int, geometry.AABB]
-                 ) -> None:
-        super().__init__()
-        """
-        tile_layout: array of tile ids arranged corresponding to stage coordinates
-        tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
-
-        Important NOTE:
-        tile_layout follows axis convention:
-        +--- +x
-        |
-        |
-        +y
-        Inconsistent tile_layout with absolute tile coordinates
-        will result in error.
-        If your tile layout has spaces, please use placeholder tile id '-1'.
-
-        """
-        self.tile_layout = tile_layout
-        self.tile_aabbs = tile_aabbs
-
-        # Create mask data structures
-        # tile_to_overlap_ids: Maps tile_id to associated overlap region id
-        # overlaps: Maps overlap_id to actual overlap region AABB
-        # Access pattern:
-        # tile_id -> overlap_id -> overlaps
-        self.tile_to_overlap_ids: dict[int, list[int]] = defaultdict(list)
-        self.overlaps: dict[int, geometry.AABB] = {}
-
-        x_length = len(self.tile_layout)
-        y_length = len(self.tile_layout[0])
-        directions = [(-1, -1), (-1, 0), (-1, 1),
-                      (0, -1),         (0, 1),
-                      (1, -1), (1, 0), (1, 1)]
-        overlap_id = 0
-        for x in range(x_length):
-            for y in range(y_length):
-                for (dx, dy) in directions:
-                    nx = x + dx
-                    ny = y + dy
-                    if (0 <= nx and nx < x_length and
-                        0 <= ny and ny < y_length and   # Boundary conditions
-                        self.tile_layout[x][y] != -1 and
-                        self.tile_layout[nx][ny] != -1):  # Spacer conditions
-
-                        c_id = self.tile_layout[x][y]
-                        c_aabb = self.tile_aabbs[c_id]
-                        n_id = self.tile_layout[nx][ny]
-                        n_aabb = self.tile_aabbs[n_id]
-                        o_aabb = self._get_overlap_aabb(c_aabb, n_aabb)
-                        self.tile_to_overlap_ids[c_id].append(overlap_id)
-                        self.overlaps[overlap_id] = o_aabb
-
-                        overlap_id += 1
-
-    def _get_overlap_aabb(self,
-                          aabb_1: geometry.AABB,
+    def _get_overlap_aabb(aabb_1: geometry.AABB,
                           aabb_2: geometry.AABB):
         """
         Utility for finding overlapping regions between tiles and chunks.
@@ -140,13 +94,79 @@ class SimpleAveraging(BlendingModule):
         # the overlap interval is the maximum of (A_min, B_min)
         # and the minimum of (A_max, B_max).
         overlap_aabb = (np.max([aabb_1[0], aabb_2[0]]),
-                    np.min([aabb_1[1], aabb_2[1]]),
-                    np.max([aabb_1[2], aabb_2[2]]),
-                    np.min([aabb_1[3], aabb_2[3]]),
-                    np.max([aabb_1[4], aabb_2[4]]),
-                    np.min([aabb_1[5], aabb_2[5]]))
+                        np.min([aabb_1[1], aabb_2[1]]),
+                        np.max([aabb_1[2], aabb_2[2]]),
+                        np.min([aabb_1[3], aabb_2[3]]),
+                        np.max([aabb_1[4], aabb_2[4]]),
+                        np.min([aabb_1[5], aabb_2[5]]))
 
         return overlap_aabb
+
+    # Output Data Structures
+    tile_to_overlap_ids: dict[int, list[int]] = defaultdict(list)
+    overlaps: dict[int, geometry.AABB] = {}
+
+    # 1) Find all unique edges
+    edges: list[tuple[int, int]] = []
+    x_length = len(tile_layout)
+    y_length = len(tile_layout[0])
+    directions = [(-1, -1), (-1, 0), (-1, 1),
+                    (0, -1),         (0, 1),
+                    (1, -1), (1, 0), (1, 1)]
+    for x in range(x_length):
+        for y in range(y_length):
+            for (dx, dy) in directions:
+                nx = x + dx
+                ny = y + dy
+                if (0 <= nx and nx < x_length and
+                    0 <= ny and ny < y_length and   # Boundary conditions
+                    tile_layout[x][y] != -1 and
+                    tile_layout[nx][ny] != -1):  # Spacer conditions
+
+                    id_1 = tile_layout[x][y]
+                    id_2 = tile_layout[nx][ny]
+                    e = tuple(sorted([id_1, id_2]))
+                    edges.append(e)
+    edges = sorted(list(set(edges)), key=lambda x: (x[0], x[1]))
+
+    # 2) Find overlap regions
+    overlap_id = 0
+    for (id_1, id_2) in edges: 
+        aabb_1 = tile_aabbs[id_1]
+        aabb_2 = tile_aabbs[id_2]
+
+        try:
+            o_aabb = _get_overlap_aabb(aabb_1, aabb_2)
+        except:
+            continue
+
+        overlaps[overlap_id] = o_aabb
+        tile_to_overlap_ids[id_1].append(overlap_id)
+        tile_to_overlap_ids[id_2].append(overlap_id)
+        overlap_id += 1
+
+    return tile_to_overlap_ids, overlaps
+
+
+class SimpleAveraging(BlendingModule):
+    """
+    Simple average of the overlaping regions.
+    """
+
+    def __init__(self,
+                 tile_layout: list[list[int]],
+                 tile_aabbs: dict[int, geometry.AABB]
+                 ) -> None:
+        super().__init__()
+        """
+        tile_layout: array of tile ids arranged corresponding to stage coordinates
+        tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
+        """
+
+        # Create mask data structures
+        self.tile_to_overlap_ids: dict[int, list[int]] = defaultdict(list)
+        self.overlaps: dict[int, geometry.AABB] = {}
+        self.tile_to_overlap_ids, self.overlaps = get_overlap_regions(tile_layout, tile_aabbs)
 
     def blend(self,
               chunks: list[torch.Tensor],
@@ -184,8 +204,8 @@ class SimpleAveraging(BlendingModule):
                 # Each tile has potentially many overlap regions.
                 # Check if the current chunk is within the current overlap before proceeding.
                 o_aabb = self.overlaps[o_id]
-                chunk_outside_overlap_region = ((cell_box[1] <= o_aabb[0] or o_aabb[1] <= cell_box[0]) and
-                                                (cell_box[3] <= o_aabb[2] or o_aabb[3] <= cell_box[2]) and
+                chunk_outside_overlap_region = ((cell_box[1] <= o_aabb[0] or o_aabb[1] <= cell_box[0]) or
+                                                (cell_box[3] <= o_aabb[2] or o_aabb[3] <= cell_box[2]) or
                                                 (cell_box[5] <= o_aabb[4] or o_aabb[5] <= cell_box[4]))
                 if chunk_outside_overlap_region:
                     continue
@@ -308,88 +328,12 @@ class WeightedLinearBlending(BlendingModule):
         """
         tile_layout: array of tile ids arranged corresponding to stage coordinates
         tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
-
-        Important NOTE:
-        tile_layout follows axis convention:
-        +--- +x
-        |
-        |
-        +y
-        Inconsistent tile_layout with absolute tile coordinates
-        will result in error.
-        If your tile layout has spaces, please use placeholder tile id '-1'.
-
         """
-        self.tile_layout = tile_layout
-        self.tile_aabbs = tile_aabbs
 
         # Create mask data structures
-        # tile_to_overlap_ids: Maps tile_id to associated overlap region id
-        # overlaps: Maps overlap_id to actual overlap region AABB
-        # Access pattern:
-        # tile_id -> overlap_id -> overlaps
         self.tile_to_overlap_ids: dict[int, list[int]] = defaultdict(list)
         self.overlaps: dict[int, geometry.AABB] = {}
-
-        # directions basis: (i, j)
-        x_length = len(self.tile_layout)
-        y_length = len(self.tile_layout[0])
-        directions = [(-1, -1), (-1, 0), (-1, 1),
-                      (0, -1),         (0, 1),
-                      (1, -1), (1, 0), (1, 1)]
-        overlap_id = 0
-        for x in range(x_length):
-            for y in range(y_length):
-                for (dx, dy) in directions:
-                    nx = x + dx
-                    ny = y + dy
-                    if (0 <= nx and nx < x_length and
-                        0 <= ny and ny < y_length and  # Boundary conditions
-                        self.tile_layout[x][y] != -1 and
-                        self.tile_layout[nx][ny] != -1):  # Spacer conditions
-
-                        c_id = self.tile_layout[x][y]
-                        c_aabb = self.tile_aabbs[c_id]
-                        n_id = self.tile_layout[nx][ny]
-                        n_aabb = self.tile_aabbs[n_id]
-                        o_aabb = self._get_overlap_aabb(c_aabb, n_aabb)
-                        self.tile_to_overlap_ids[c_id].append(overlap_id)
-                        self.overlaps[overlap_id] = o_aabb
-
-                        overlap_id += 1
-
-        # Define tile_centers for reference in conic weight function
-        self.tile_centers: dict[int, tuple[float, float, float]] = {}
-        for t_id, t_aabb in tile_aabbs.items():
-            mz, my, mx = (t_aabb[1] - t_aabb[0],
-                          t_aabb[3] - t_aabb[2],
-                          t_aabb[5] - t_aabb[4])
-            self.tile_centers[t_id] = (mz, my, mx)
-
-    def _get_overlap_aabb(self,
-                          aabb_1: geometry.AABB,
-                          aabb_2: geometry.AABB):
-        """
-        Utility for finding overlapping regions between tiles and chunks.
-        """
-
-        # Check AABB's are colliding, meaning they colllide in all 3 axes
-        assert (aabb_1[1] > aabb_2[0] and aabb_1[0] < aabb_2[1]) and \
-               (aabb_1[3] > aabb_2[2] and aabb_1[2] < aabb_2[3]) and \
-               (aabb_1[5] > aabb_2[4] and aabb_1[4] < aabb_2[5]), \
-               f'Input AABBs are not colliding: {aabb_1=}, {aabb_2=}'
-
-        # Between two colliding intervals A and B,
-        # the overlap interval is the maximum of (A_min, B_min)
-        # and the minimum of (A_max, B_max).
-        overlap_aabb = (np.max([aabb_1[0], aabb_2[0]]),
-                    np.min([aabb_1[1], aabb_2[1]]),
-                    np.max([aabb_1[2], aabb_2[2]]),
-                    np.min([aabb_1[3], aabb_2[3]]),
-                    np.max([aabb_1[4], aabb_2[4]]),
-                    np.min([aabb_1[5], aabb_2[5]]))
-
-        return overlap_aabb
+        self.tile_to_overlap_ids, self.overlaps = get_overlap_regions(tile_layout, tile_aabbs)
 
     def blend(self,
               chunks: list[torch.Tensor],
@@ -561,6 +505,12 @@ def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
     Utility for parsing tile layout from a bigstitcher xml
     requested by some blending modules.
 
+    tile_layout follows axis convention:
+    +--- +x
+    |
+    |
+    +y
+
     Tile ids in output tile_layout uses the same tile ids
     defined in the xml file. Spaces denoted with tile id '-1'.
     """
@@ -588,12 +538,14 @@ def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
     y_pos = sorted(y_pos)
     delta_y = y_pos[1] - y_pos[0]
 
-    # Fill tle_layout
+    # Fill tile_layout
     tile_layout = np.ones((len(y_pos), len(x_pos))) * -1
     for tile_id, s_pos in stage_positions_xyz.items():
         ix = int(s_pos[0] / delta_x)
         iy = int(s_pos[1] / delta_y)
 
         tile_layout[iy, ix] = tile_id
+    
+    tile_layout = tile_layout.astype(int)
 
     return tile_layout

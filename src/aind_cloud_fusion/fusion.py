@@ -276,6 +276,12 @@ def run_fusion(
             z, y, x = cell
             process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
 
+        # Temporarily overwriting process args to 
+        # a single chunk for debugging. 
+        # process_args = []
+        # process_args.append({"cell_num": 0, "z": 1, "y": 4, "x": 43})
+        # num_cells = 1
+
         for p_args in process_args:
             LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
             start_time = time.time()
