@@ -1,5 +1,9 @@
 """
-Defines configuration file with unique fields per exaspim worker. 
+Example fusion scheduler.
+Reads dataset in S3 following Neural Dynamics dataset convention
+and generates yaml files containing configurations
+for individual worker runtimes.
+An example yaml schema names 'data contract' provided below.
 """
 
 from collections import OrderedDict
@@ -7,34 +11,32 @@ from datetime import datetime
 import glob
 import os
 import xmltodict
-import yaml
 
 import numpy as np
 from pathlib import Path
-import torch
 
 import aind_cloud_fusion.io as io
-import aind_cloud_fusion.blend as blend
 import aind_cloud_fusion.fusion as fusion
 import aind_cloud_fusion.geometry as geometry
-import script_utils
+import aind_cloud_fusion.script_utils as script_utils
 
 """
-DATA CONTRACT: 
-Exaspim scheduler outputs a configuration file 
-with the following minimal fields. 
+DATA CONTRACT:
+Exaspim scheduler outputs a configuration file
+with the following minimal fields.
 
-pipeline: 'exaspim'
+dataset_type: {BigStitcherDataset, BigStitcherDatasetChannel}
+channel: channel number
 input_path: 's3://<YOUR INPUT PATH>'
 output_path: "s3://<YOUR OUTPUT PATH>"
 worker_cells: [list of cell 3-ples]
 """
 
-def create_starter_ymls(xml_path: str, 
-                        output_path: str, 
+def create_starter_ymls(xml_path: str,
+                        output_path: str,
                         num_workers: int = 64):
     """
-    xml_path: Local xml path 
+    xml_path: Local xml path
     output_path: Local results path
     """
 
@@ -50,17 +52,13 @@ def create_starter_ymls(xml_path: str,
     parts = parsed_path.split('/')
     if 'root' in parts:
         parts.remove('root')
-    if 'capsule' in parts: 
+    if 'capsule' in parts:
         parts.remove('capsule')
     input_s3_path = 's3://aind-open-data/' + parts[2] + '/' + parts[3] + '/'
     datetime_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output_s3_path_base = 's3://aind-open-data/' + parts[2] + f'_full_res_{datetime_str}/'
 
-    # Figure out the exaspim channel
-    channels = script_utils.get_unique_channels_for_dataset(input_s3_path)
-    channel = int(channels[0])   # (Should only be one channel)
-
-    # Init application objects to init fusion scheduling. 
+    # Init application objects to init fusion scheduling.
     # Application Object: DATASET
     xml_path = str(Path(xml_path))
     s3_path = input_s3_path
@@ -77,11 +75,12 @@ def create_starter_ymls(xml_path: str,
     # Not required here
 
     # Application Parameter: CELL_SIZE
-    CELL_SIZE = [256, 256, 256]
+    CELL_SIZE = [128, 128, 128]
 
     # Application Parameter: POST_REG_TFMS
+    # Exaspim and Dispim do not require deskewing
     POST_REG_TFMS: list[geometry.Affine] = []
-    
+
     # Application Object: BLENDING_MODULE
     # Not required here
 
@@ -103,31 +102,35 @@ def create_starter_ymls(xml_path: str,
     z_flat = z.flatten()
     cell_coords = np.column_stack((z_flat, y_flat, x_flat))
 
-    # Ex math: 
+    # Ex math:
     # 50 cells
     # 6 workers
     # ceil(50 / 6) -> 9
-    n = int(np.ceil(len(cell_coords) / num_workers))
+    channels = script_utils.get_unique_channels_for_dataset(input_s3_path)
+    total_cells = len(cell_coords) * channels
+    n = int(np.ceil(total_cells / num_workers))
     print(f'Each worker assigned {n} cells')
-    for i in range(num_workers):
-        print(f'Generating Worker {i} Yaml')
-        start = i * n 
-        end = (i + 1) * n
-        worker_cells = cell_coords[start:end, :].tolist()
 
-        configs = {}
-        configs['pipeline'] = 'exaspim'
-        configs['input_path'] = input_s3_path
-        configs['output_path'] = output_s3_path_base + f'channel_{channel}.zarr'
-        configs['worker_cells'] = worker_cells
+    for worker_id in range(num_workers):
+        for i, ch in enumerate(channels):
+            print(f'Generating Worker {worker_id} Yaml')
+            start = worker_id * n
+            end = (worker_id + 1) * n
+            worker_cells = cell_coords[start:end, :].tolist()
 
-        yaml_path = (
-            Path(output_path)
-            / f"worker_config_{i}.yml"
-        )
-        io.write_config_yaml(
-            yaml_path=yaml_path, yaml_data=configs
-        )
+            if i == 0:
+                dataset_type = 'BigStitcherDataset'
+            else:
+                dataset_type = 'BigStitcherDatasetChannel'
+
+            ch_X_configs = {}
+            ch_X_configs['dataset_type'] = dataset_type
+            ch_X_configs['channel'] = ch
+            ch_X_configs['input_path'] = input_s3_path
+            ch_X_configs['output_path'] = output_s3_path_base + f'channel_{ch}.zarr'
+            ch_X_configs['worker_cells'] = worker_cells
+            script_utils.write_config_yaml(str(output_path / f'worker_{worker_id}.yml'), ch_X_configs)
+
 
 if __name__ == '__main__':
     xml_path = str(glob.glob('../data/**/*.xml')[0])
@@ -135,7 +138,7 @@ if __name__ == '__main__':
 
     print(f'{xml_path=}')
     print(f'{output_path=}')
-    
-    create_starter_ymls(xml_path, 
-                        output_path, 
+
+    create_starter_ymls(xml_path,
+                        output_path,
                         num_workers = 1000)

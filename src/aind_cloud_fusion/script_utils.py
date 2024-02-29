@@ -1,10 +1,15 @@
 """
-Utilities for scripts. 
+Utilities for scripts.
 """
 
 import boto3
 import re
 import yaml
+
+def read_config_yaml(yaml_path: str) -> dict:
+    with open(yaml_path, "r") as f:
+        yaml_dict = yaml.safe_load(f)
+    return yaml_dict
 
 def write_config_yaml(yaml_path: str, yaml_data: dict) -> None:
     with open(yaml_path, "w") as file:
@@ -79,7 +84,7 @@ def get_unique_channels_for_dataset(dataset_path: str) -> list:
 
     """
     # Reference Path: s3://aind-open-data/HCR_677594_2023-10-13_13-55-48/SPIM.ome.zarr/
-    # path_parts = dataset_path.split('/')    
+    # path_parts = dataset_path.split('/')
     # tiles_in_path = list_bucket_directory(path_parts[2], path_parts[3] + '/' + path_parts[4])
 
     tiles_in_path = list_all_tiles_in_bucket_path(

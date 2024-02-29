@@ -3,6 +3,9 @@ import os
 import logging
 import time
 
+import dask
+import dask.array as da
+from dask.distributed import Client, LocalCluster
 import numpy as np
 import torch
 import s3fs
@@ -69,6 +72,7 @@ def initialize_fusion(
 
     for tile_id, tile_arr in tile_arrays.items():
         tile_sizes_zyx[tile_id] = zyx = tile_arr.shape[2:]
+        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape[2:]
         tile_boundaries = torch.Tensor(
             [
                 [0.0, 0.0, 0.0],
@@ -96,18 +100,33 @@ def initialize_fusion(
 
     # Resolve Output Volume Dimensions and Absolute Position
     global_tile_boundaries = geometry.aabb_3d(tile_boundary_point_cloud_zyx)
-    OUTPUT_VOLUME_SIZE = (
+    OUTPUT_VOLUME_SIZE = [
         int(global_tile_boundaries[1] - global_tile_boundaries[0]),
         int(global_tile_boundaries[3] - global_tile_boundaries[2]),
         int(global_tile_boundaries[5] - global_tile_boundaries[4]),
-    )
+    ]
 
-    OUTPUT_VOLUME_ORIGIN = torch.Tensor(
-        [
-            torch.min(tile_boundary_point_cloud_zyx[:, 0]).item(),
-            torch.min(tile_boundary_point_cloud_zyx[:, 1]).item(),
-            torch.min(tile_boundary_point_cloud_zyx[:, 2]).item(),
-        ]
+    # Rounding up the OUTPUT_VOLUME_SIZE to the nearest chunk
+    # b/c zarr-python has occasional errors writing at the boundaries.
+    # This ensures a multiple of chunksize without losing data.
+    remainder_0 = OUTPUT_VOLUME_SIZE[0] % output_params.chunksize[2]
+    remainder_1 = OUTPUT_VOLUME_SIZE[1] % output_params.chunksize[3]
+    remainder_2 = OUTPUT_VOLUME_SIZE[2] % output_params.chunksize[4]
+    if remainder_0 > 0:
+        OUTPUT_VOLUME_SIZE[0] -= remainder_0
+        OUTPUT_VOLUME_SIZE[0] += output_params.chunksize[2]
+    if remainder_1 > 0:
+        OUTPUT_VOLUME_SIZE[1] -= remainder_1
+        OUTPUT_VOLUME_SIZE[1] += output_params.chunksize[3]
+    if remainder_2 > 0:
+        OUTPUT_VOLUME_SIZE[2] -= remainder_2
+        OUTPUT_VOLUME_SIZE[2] += output_params.chunksize[4]
+    OUTPUT_VOLUME_SIZE = tuple(OUTPUT_VOLUME_SIZE)
+
+    OUTPUT_VOLUME_ORIGIN = (
+        torch.min(tile_boundary_point_cloud_zyx[:, 0]).item(),
+        torch.min(tile_boundary_point_cloud_zyx[:, 1]).item(),
+        torch.min(tile_boundary_point_cloud_zyx[:, 2]).item(),
     )
 
     # Shift AABB's into Output Volume where
@@ -133,7 +152,7 @@ def initialize_fusion(
     )
 
 
-def initalize_output_volume(
+def initialize_output_volume(
     output_params: io.OutputParameters,
     output_volume_size: tuple[int, int, int],
 ) -> zarr.core.Array:
@@ -151,31 +170,31 @@ def initalize_output_volume(
     """
 
     # Local execution
-    out_group = zarr.open_group(output_params.path, mode="a")
-    
+    out_group = zarr.open_group(output_params.path, mode="w")
+
     # Cloud execuion
     if output_params.path.startswith('s3'):
         s3 = s3fs.S3FileSystem(
             config_kwargs={
                 'max_pool_connections': 50,
                 's3': {
-                  'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
+                'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
+                'max_concurrent_requests': 20  # Increased from 10 -> 20.
                 },
                 'retries': {
-                  'total_max_attempts': 100,
-                  'mode': 'adaptive',
+                'total_max_attempts': 100,
+                'mode': 'adaptive',
                 }
             }
         )
         store = s3fs.S3Map(root=output_params.path, s3=s3)
-        out_group = zarr.group(store=store, overwrite=True)
+        out_group = zarr.open(store=store, mode='a')
 
     path = "0"
     chunksize = output_params.chunksize
     datatype = output_params.dtype
     dimension_separator = "/"
     compressor = output_params.compressor
-    global output_volume
     output_volume = out_group.create_dataset(
         path,
         shape=(
@@ -208,16 +227,17 @@ def get_cell_count_zyx(
     x_cnt = int(np.ceil(output_volume_size[2] / cell_size[2]))
 
     # Zarr struggles with writing boundary chunks
-    # This is definitely a zarr library bug. 
+    # This is definitely a zarr library bug.
     # Solution: simply do not write the boundary chunks
     z_cnt = z_cnt - 1
     y_cnt = y_cnt - 1
     x_cnt = x_cnt - 1
-    
+
     return z_cnt, y_cnt, x_cnt
 
 
 def run_fusion(
+    # client,    # Uncomment for testing in jupyterlab
     dataset: io.Dataset,
     output_params: io.OutputParameters,
     runtime_params: io.RuntimeParameters,
@@ -244,21 +264,25 @@ def run_fusion(
     tile_aabbs = d
     output_volume_size = e
     output_volume_origin = f  # Temp variables to meet line character maximum.
-    output_volume = initalize_output_volume(output_params, output_volume_size)
+    output_volume = initialize_output_volume(output_params, output_volume_size)
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
 
-    process_args: list[dict] = []
-    num_cells = len(runtime_params.worker_cells)
-    for cell_num, cell in enumerate(runtime_params.worker_cells):
-        z, y, x = cell
-        process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
-
-    # SINGLE-PROCESS EXECUTION
-    if runtime_params.pool_size == 1: 
+    # Vanilla Processing
+    if runtime_params.option == 0:
         start_run = time.time()
 
-        # Run fusion: Simply iterate through all work
+        process_args: list[dict] = []
+        num_cells = len(runtime_params.worker_cells)
+        for cell_num, cell in enumerate(runtime_params.worker_cells):
+            z, y, x = cell
+            process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
+
+        # DEBUGGING: Temporarily overwrite process args with single chunk
+        # process_args = []
+        # process_args.append({"cell_num": 0, "z": 1, "y": 4, "x": 43})
+        # num_cells = 1
+
         for p_args in process_args:
             LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
             start_time = time.time()
@@ -273,7 +297,7 @@ def run_fusion(
                     p_args["z"],
                     p_args["y"],
                     p_args["x"],
-                    runtime_params.devices[0],
+                    torch.device('cpu'),
                     LOGGER,
             )
             LOGGER.info(
@@ -281,13 +305,19 @@ def run_fusion(
             )
         LOGGER.info(f"Runtime: {time.time() - start_run}")
 
-    # MULTI-PROCESS EXECUTION
-    else:
+    # Multi Processing
+    elif runtime_params.option == 1:
+        start_run = time.time()
+
+        process_args: list[dict] = []
+        num_cells = len(runtime_params.worker_cells)
+        for cell_num, cell in enumerate(runtime_params.worker_cells):
+            z, y, x = cell
+            process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
+
         # Important for prevent running out of resources
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
-        torch.multiprocessing.set_sharing_strategy('file_system')
-        
         # Run Fusion: Fill work queue (active processes) with inital tasks
         # Task-specific info includes process_args and device.
         start_run = time.time()
@@ -310,14 +340,14 @@ def run_fusion(
                     p_args["z"],
                     p_args["y"],
                     p_args["x"],
-                    runtime_params.devices[i % len(runtime_params.devices)],
+                    torch.device('cpu'),
                     LOGGER,
                 ),
             )
             active_processes.append(
                 (
                     p,
-                    runtime_params.devices[i % len(runtime_params.devices)],
+                    torch.device('cpu'),
                     p_args["cell_num"],
                     time.time(),
                 )
@@ -338,7 +368,7 @@ def run_fusion(
                     tmp.append((p, device, cell_num, start_time))
                 else:
                     p.close()
-                    del p 
+                    del p
                     LOGGER.info(
                         f"Finished Cell {cell_num}/{num_cells}: {time.time() - start_time}"
                     )
@@ -375,6 +405,62 @@ def run_fusion(
 
         LOGGER.info(f"Runtime: {time.time() - start_run}")
 
+    # Dask
+    elif runtime_params.option == 2:
+        start_run = time.time()
+
+        batch_start = start_run
+        client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
+
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
+        num_cells = len(runtime_params.worker_cells)
+        batch_size = 1000   # Good batch size for 128^3.
+        LOGGER.info(f'Coloring {num_cells} cells')
+        LOGGER.info(f'Batch Size: {batch_size}')
+
+        delayed_color_cells = []
+        for cell_num, cell in enumerate(runtime_params.worker_cells):
+            z, y, x = cell
+            delayed_color_cells.append(
+                dask.delayed(color_cell, pure=True)(
+                    tile_arrays,
+                    tile_transforms,
+                    tile_sizes_zyx,
+                    tile_aabbs,
+                    output_volume,
+                    output_volume_origin,
+                    cell_size,
+                    blend_module,
+                    z,
+                    y,
+                    x,
+                    torch.device("cpu"),  # Hardcoding CPU cluster
+                    LOGGER
+                )
+            )
+            # Batching
+            if len(delayed_color_cells) == batch_size:
+                LOGGER.info(f'Calculating up to {cell_num}/{num_cells}...')
+                da.compute(*delayed_color_cells)
+
+                # Clear memory for runtime stability
+                delayed_color_cells = []
+                # client.restart()
+                # ^ Remove restart command, dask bug
+
+                LOGGER.info(f'Finished up to {cell_num}/{num_cells}. Batch time: {time.time() - batch_start}')
+                batch_start = time.time()
+
+        # Compute remaining cells
+        LOGGER.info(f'Calculating up to {num_cells}/{num_cells}...')
+        da.compute(*delayed_color_cells)
+        delayed_color_cells = []
+        LOGGER.info(f'Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}')
+        batch_start = time.time()
+
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
+
 
 def color_cell(
     tile_arrays: dict[int, io.LazyArray],
@@ -382,14 +468,14 @@ def color_cell(
     tile_sizes_zyx: dict[int, tuple[int, int, int]],
     tile_aabbs: dict[int, geometry.AABB],
     output_volume: zarr.core.Array,
-    output_volume_origin: torch.Tensor,
+    output_volume_origin: tuple[float, float, float],
     cell_size: tuple[int, int, int],
     blend_module: blend.BlendingModule,
     z: int,
     y: int,
     x: int,
     device: torch.device,
-    logger: logging.Logger,
+    logger: logging.Logger  # Depreciated
 ):
     """
     Parallelized function called in fusion.
@@ -407,7 +493,7 @@ def color_cell(
     z, y, x: location of cell in terms of output volume indices
     """
 
-    LOGGER = logger
+    # LOGGER = logger
 
     # Cell Boundaries, exclusive stop index
     output_volume_size = output_volume.shape
@@ -421,7 +507,7 @@ def color_cell(
     cell_box[:, 1] = np.minimum(
         cell_box[:, 1], np.array(output_volume_size[2:])
     )
-    
+
     cell_box = cell_box.flatten()
 
     # Collision Detection
@@ -436,15 +522,12 @@ def color_cell(
         ):
             overlapping_tiles.append(tile_id)
 
-    LOGGER.info(f"{cell_box=}")
-    LOGGER.info(f"{overlapping_tiles=}")
+    # LOGGER.info(f"{cell_box=}")
+    # LOGGER.info(f"{overlapping_tiles=}")
 
-    # Interpolation
-    z_length = cell_box[1] - cell_box[0]
-    y_length = cell_box[3] - cell_box[2]
-    x_length = cell_box[5] - cell_box[4]
-
-    fused_cell = torch.zeros((1, 1, z_length, y_length, x_length)).to(device)
+    # Interpolation for cell_contributions
+    cell_contributions: list[torch.Tensor] = []
+    cell_contribution_tile_ids: list[int] = []
     for tile_id in overlapping_tiles:
         # Init tile coords, arange end-exclusive, +0.5 to represent voxel center
         z_indices = torch.arange(cell_box[0], cell_box[1], step=1) + 0.5
@@ -515,10 +598,10 @@ def color_cell(
         crop_max_y = int(torch.ceil(crop_max_y))
         crop_max_x = int(torch.ceil(crop_max_x))
 
-        LOGGER.info(
-            f"""AABB of Crop belonging to image {tile_id}:
-        {crop_min_z}, {crop_max_z}, {crop_min_y}, {crop_max_y}, {crop_min_x}, {crop_max_x}"""
-        )
+        # LOGGER.info(
+        #     f"""AABB of Crop belonging to image {tile_id}:
+        # {crop_min_z}, {crop_max_z}, {crop_min_y}, {crop_max_y}, {crop_min_x}, {crop_max_x}"""
+        # )
 
         # Define tile coords wrt base image crop coordinates
         image_crop_offset = torch.Tensor(
@@ -528,7 +611,7 @@ def color_cell(
 
         # Prep inputs to interpolation
         image_crop_slice = (
-            0, 
+            0,
             0,
             slice(crop_min_z, crop_max_z),
             slice(crop_min_y, crop_max_y),
@@ -571,21 +654,30 @@ def color_cell(
         image_crop = image_crop[(None,) * 2]
         tile_coords = torch.unsqueeze(tile_coords, 0)
 
-        # Interpolate and Fuse
+        # Interpolate and Store
         tile_contribution = torch.nn.functional.grid_sample(
             image_crop, tile_coords, padding_mode="zeros", mode="nearest", align_corners=False
         )
-        kwargs = {'chunk_tile_ids': [tile_id],
-                  'cell_box': cell_box}
-        fused_cell = blend_module.blend(
-            fused_cell, 
-            [tile_contribution],
-            device, 
-            kwargs
-        )
+
+        cell_contributions.append(tile_contribution)
+        cell_contribution_tile_ids.append(tile_id)
 
         del tile_coords
-        del tile_contribution
+
+    # Fuse all cell contributions together with specified blend module
+    fused_cell = torch.zeros((1,
+                              1,
+                              cell_box[1] - cell_box[0],
+                              cell_box[3] - cell_box[2],
+                              cell_box[5] - cell_box[4]))
+    if len(cell_contributions) != 0:
+        fused_cell = blend_module.blend(
+            cell_contributions,
+            device,
+            kwargs={'chunk_tile_ids': cell_contribution_tile_ids,
+                    'cell_box': cell_box}
+        )
+        cell_contributions = []
 
     # Write
     output_slice = (
@@ -597,7 +689,7 @@ def color_cell(
     )
     # Convert from float32 -> canonical uint16
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
-    
     output_volume[output_slice] = output_chunk
 
     del fused_cell
+    del output_chunk
