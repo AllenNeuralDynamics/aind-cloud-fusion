@@ -371,8 +371,8 @@ class WeightedLinearBlending(BlendingModule):
                 # Each tile has potentially many overlap regions.
                 # Check if the current chunk is within the current overlap before proceeding.
                 o_aabb = self.overlaps[o_id]
-                chunk_outside_overlap_region = ((cell_box[1] <= o_aabb[0] or o_aabb[1] <= cell_box[0]) and
-                                                (cell_box[3] <= o_aabb[2] or o_aabb[3] <= cell_box[2]) and
+                chunk_outside_overlap_region = ((cell_box[1] <= o_aabb[0] or o_aabb[1] <= cell_box[0]) or
+                                                (cell_box[3] <= o_aabb[2] or o_aabb[3] <= cell_box[2]) or
                                                 (cell_box[5] <= o_aabb[4] or o_aabb[5] <= cell_box[4]))
                 if chunk_outside_overlap_region:
                     continue

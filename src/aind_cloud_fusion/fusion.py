@@ -122,12 +122,10 @@ def initialize_fusion(
         OUTPUT_VOLUME_SIZE[2] += output_params.chunksize[4]
     OUTPUT_VOLUME_SIZE = tuple(OUTPUT_VOLUME_SIZE)
 
-    OUTPUT_VOLUME_ORIGIN = torch.Tensor(
-        [
-            torch.min(tile_boundary_point_cloud_zyx[:, 0]).item(),
-            torch.min(tile_boundary_point_cloud_zyx[:, 1]).item(),
-            torch.min(tile_boundary_point_cloud_zyx[:, 2]).item(),
-        ]
+    OUTPUT_VOLUME_ORIGIN = (
+        torch.min(tile_boundary_point_cloud_zyx[:, 0]).item(),
+        torch.min(tile_boundary_point_cloud_zyx[:, 1]).item(),
+        torch.min(tile_boundary_point_cloud_zyx[:, 2]).item(),
     )
 
     # Shift AABB's into Output Volume where
@@ -276,8 +274,7 @@ def run_fusion(
             z, y, x = cell
             process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
 
-        # Temporarily overwriting process args to 
-        # a single chunk for debugging. 
+        # DEBUGGING: Temporarily overwrite process args with single chunk
         # process_args = []
         # process_args.append({"cell_num": 0, "z": 1, "y": 4, "x": 43})
         # num_cells = 1
@@ -467,7 +464,7 @@ def color_cell(
     tile_sizes_zyx: dict[int, tuple[int, int, int]],
     tile_aabbs: dict[int, geometry.AABB],
     output_volume: zarr.core.Array,
-    output_volume_origin: torch.Tensor,
+    output_volume_origin: tuple[float, float, float],
     cell_size: tuple[int, int, int],
     blend_module: blend.BlendingModule,
     z: int,

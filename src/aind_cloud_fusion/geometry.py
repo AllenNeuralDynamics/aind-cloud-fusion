@@ -153,7 +153,7 @@ def aabb_3d(data) -> AABB:
 
         dim_min = torch.min(data[dim_slice]).item()
         dim_max = torch.max(data[dim_slice]).item()
-        output.append(round(dim_min))
-        output.append(round(dim_max))
+        output.append(dim_min)
+        output.append(dim_max)
 
     return tuple(output)
