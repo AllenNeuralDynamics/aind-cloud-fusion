@@ -23,7 +23,7 @@ def get_tile_overlaps(xml_path: str, s3_path: str):
 
     # Application Object: DATASET
     xml_path = str(Path(xml_path))
-    s3_path = input_path
+    s3_path = s3_path #pathlib.Path would change 's3://' -> 's3:/'
     DATASET = io.BigStitcherDataset(xml_path, s3_path)
 
     # Application Object: OUTPUT_PARAMS
@@ -45,7 +45,7 @@ def get_tile_overlaps(xml_path: str, s3_path: str):
     tile_layout = blend.parse_yx_tile_layout(xml_path)
     
     # Finally, get overlap regions
-    blend.get_overlap_regions(tile_layout, tile_aabbs)
+    tile_to_overlap_ids, overlaps = blend.get_overlap_regions(tile_layout, tile_aabbs)
 
     return tile_to_overlap_ids, overlaps
 
