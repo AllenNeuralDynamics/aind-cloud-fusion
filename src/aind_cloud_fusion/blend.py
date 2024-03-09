@@ -63,17 +63,17 @@ class MaxProjection(BlendingModule):
 
 def get_overlap_regions(tile_layout: list[list[int]],
                         tile_aabbs: dict[int, geometry.AABB]
-                        ) -> tuple[dict[int, list[int]], 
+                        ) -> tuple[dict[int, list[int]],
                                    dict[int, geometry.AABB]]:
     """
-    Input: 
+    Input:
     tile_layout: array of tile ids arranged corresponding to stage coordinates
     tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
-    
-    Output: 
+
+    Output:
     tile_to_overlap_ids: Maps tile_id to associated overlap region id
     overlaps: Maps overlap_id to actual overlap region AABB
-    
+
     Access pattern:
     tile_id -> overlap_id -> overlaps
     """
@@ -131,7 +131,7 @@ def get_overlap_regions(tile_layout: list[list[int]],
 
     # 2) Find overlap regions
     overlap_id = 0
-    for (id_1, id_2) in edges: 
+    for (id_1, id_2) in edges:
         aabb_1 = tile_aabbs[id_1]
         aabb_2 = tile_aabbs[id_2]
 
@@ -342,6 +342,7 @@ class WeightedLinearBlending(BlendingModule):
                           t_aabb[3] - t_aabb[2],
                           t_aabb[5] - t_aabb[4])
             self.tile_centers[t_id] = (mz, my, mx)
+        self.tile_aabbs = tile_aabbs
 
     def blend(self,
               chunks: list[torch.Tensor],
@@ -481,11 +482,14 @@ class WeightedLinearBlending(BlendingModule):
             z_grid, y_grid, x_grid = torch.meshgrid(
                 z_indices, y_indices, x_indices, indexing="ij"  # {z_grid, y_grid, x_grid} are 3D Tensors
             )
+
+            # Calculate weight map, inverted cone.
             cz, cy, cx = self.tile_centers[t_id]
-            z_dist = torch.abs(z_grid - cz)
-            y_dist = torch.abs(y_grid - cy)
-            x_dist = torch.abs(x_grid - cx)
-            distance_map = 1 / (z_dist + y_dist + x_dist)  # Notion of distance decreases with distance from center
+            t_aabb = self.tile_aabbs[t_id]
+            y_min = t_aabb[2]
+            x_min = t_aabb[4]
+            h = max(cy - y_min, cx - x_min)
+            distance_map = h - (torch.abs(x_grid - cx) + torch.abs(y_grid - cy))
             distance_map = distance_map.unsqueeze(0).unsqueeze(0)  # Now a 5D Tensor
 
             per_chunk_distance = distance_map * net_occupancy_map
@@ -553,7 +557,7 @@ def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
         iy = int(s_pos[1] / delta_y)
 
         tile_layout[iy, ix] = tile_id
-    
+
     tile_layout = tile_layout.astype(int)
 
     return tile_layout
