@@ -10,9 +10,6 @@ from collections import defaultdict
 import aind_cloud_fusion.geometry as geometry
 
 
-import matplotlib.pyplot as plt
-
-
 class BlendingModule:
     """
     Minimal interface for modular blending function.
@@ -586,16 +583,16 @@ class WeightedLinearBlending(BlendingModule):
             per_chunk_distance_maps.append(per_chunk_distance)
 
 
-        plt.imshow(total_distance_map[0, 0, 0, :, :])
-        plt.colorbar()
-        plt.savefig(f'total_distance_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
-        plt.clf()
+        # plt.imshow(total_distance_map[0, 0, 0, :, :])
+        # plt.colorbar()
+        # plt.savefig(f'total_distance_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+        # plt.clf()
 
-        for i, d_map in enumerate(per_chunk_distance_maps):
-            plt.imshow(d_map[0, 0, 0, :, :])
-            plt.colorbar()
-            plt.savefig(f'distance_map{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
-            plt.clf()
+        # for i, d_map in enumerate(per_chunk_distance_maps):
+        #     plt.imshow(d_map[0, 0, 0, :, :])
+        #     plt.colorbar()
+        #     plt.savefig(f'distance_map{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+        #     plt.clf()
 
         weight_maps: list[torch.Tensor] = []
         for d_map, c in zip(per_chunk_distance_maps, chunks):
@@ -603,15 +600,15 @@ class WeightedLinearBlending(BlendingModule):
             # weight_map[d_map == 0] = 1
             weight_maps.append(weight_map)
 
-        for i, c in enumerate(chunks):
-            plt.imshow(c[0, 0, 0, :, :])
-            plt.savefig(f'c{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+        # for i, c in enumerate(chunks):
+        #     plt.imshow(c[0, 0, 0, :, :])
+        #     plt.savefig(f'c{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
 
-        for i, w_map in enumerate(weight_maps):
-            plt.imshow(w_map[0, 0, 0, :, :])
-            plt.colorbar()
-            plt.savefig(f'weight_map{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
-            plt.clf()
+        # for i, w_map in enumerate(weight_maps):
+        #     plt.imshow(w_map[0, 0, 0, :, :])
+        #     plt.colorbar()
+        #     plt.savefig(f'weight_map{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+        #     plt.clf()
 
 
         # 3) Finally, blend all the chunks together.
