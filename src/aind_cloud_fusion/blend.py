@@ -10,6 +10,9 @@ from collections import defaultdict
 import aind_cloud_fusion.geometry as geometry
 
 
+import matplotlib.pyplot as plt
+
+
 class BlendingModule:
     """
     Minimal interface for modular blending function.
@@ -318,11 +321,13 @@ class SimpleAveraging(BlendingModule):
 class WeightedLinearBlending(BlendingModule):
     """
     Linear Blending with distance-based weights.
+    NOTE: Assumes
     """
 
     def __init__(self,
                  tile_layout: list[list[int]],
-                 tile_aabbs: dict[int, geometry.AABB]
+                 tile_aabbs: dict[int, geometry.AABB],
+                 weight_function: str = 'pyramid'
                  ) -> None:
         super().__init__()
         """
@@ -338,11 +343,34 @@ class WeightedLinearBlending(BlendingModule):
         # Define tile_centers for reference in conic weight function
         self.tile_centers: dict[int, tuple[float, float, float]] = {}
         for t_id, t_aabb in tile_aabbs.items():
-            mz, my, mx = (t_aabb[1] - t_aabb[0],
-                          t_aabb[3] - t_aabb[2],
-                          t_aabb[5] - t_aabb[4])
+            mz, my, mx = ((t_aabb[1] + t_aabb[0]) / 2.,
+                          (t_aabb[3] + t_aabb[2]) / 2.,
+                          (t_aabb[5] + t_aabb[4]) / 2.)
             self.tile_centers[t_id] = (mz, my, mx)
         self.tile_aabbs = tile_aabbs
+
+        # TODO: Convert these into dask arrays
+        # def pyramid(n):
+        #     r = np.arange(n)
+        #     d = np.minimum(r,r[::-1])
+        #     return np.minimum.outer(d,d)
+
+        # def gaussian(n):
+        #     x = np.linspace(-10, 10, n)
+        #     y = np.linspace(-10, 10, n)
+        #     X, Y = np.meshgrid(x, y)
+        #     mu_x = mu_y = 0
+        #     sigma_x = sigma_y = 5   # Sigma hardcoded such that gaussian spans image boundaries.
+        #     gaussian = np.exp(-((X - mu_x)**2 / (2 * sigma_x**2) + (Y - mu_y)**2 / (2 * sigma_y**2)))
+
+        #     return gaussian
+
+        # self.weight_function = None
+        # if weight_function == 'pyramid':
+        #     self.weight_function = pyramid(n)
+        # elif weight_function == 'gaussian':
+        #     self.weight_function = gaussian(n)
+
 
     def blend(self,
               chunks: list[torch.Tensor],
@@ -367,6 +395,12 @@ class WeightedLinearBlending(BlendingModule):
 
         # Trivial no blending case -- non-overlaping region.
         if len(chunks) == 1:
+            # cell_box = kwargs['cell_box']
+            # plt.imshow(chunks[0][0, 0, 0, :, :])
+            # plt.colorbar()
+            # plt.savefig(f'no_blend_chunk_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+            # plt.clf()
+
             return chunks[0]
 
         # For 2+ chunks, within an overlapping region:
@@ -468,46 +502,132 @@ class WeightedLinearBlending(BlendingModule):
         # 2) Post-process occupancy maps into weight maps
         per_chunk_distance_maps: list[torch.Tensor] = []
         total_distance_map = torch.zeros(chunks[0].shape)
-        for t_id, t_maps in occupancy_maps.items():
+        for i, (t_id, t_maps) in enumerate(occupancy_maps.items()):
             # Logical-OR occupancy maps at tile level
+            # Net occupancy map is the net occupancy of each tile inside the chunk
             net_occupancy_map = torch.zeros(chunks[0].shape)
             for t_map in t_maps:
                 net_occupancy_map += t_map
             net_occupancy_map[net_occupancy_map > 1] = 1
 
-            # Each tile gets its own distance map
+            # Each tile gets its own 'distance' map.
+            # Distance map is an inverted cone centered wrt to each tile center.
             z_indices = torch.arange(cell_box[0], cell_box[1], step=1) + 0.5
             y_indices = torch.arange(cell_box[2], cell_box[3], step=1) + 0.5
             x_indices = torch.arange(cell_box[4], cell_box[5], step=1) + 0.5
             z_grid, y_grid, x_grid = torch.meshgrid(
                 z_indices, y_indices, x_indices, indexing="ij"  # {z_grid, y_grid, x_grid} are 3D Tensors
             )
+            # cz, cy, cx = self.tile_centers[t_id]
+            # t_aabb = self.tile_aabbs[t_id]
+            # x_min = t_aabb[4]
+            # cone_radius = cx - x_min   # Assuming square tile
+            # h = cone_radius   # Cone base is inscribed inside square tile.
+            # distance_map = h - (torch.abs(x_grid - cx) + torch.abs(y_grid - cy))
+            # distance_map[distance_map < 0] = 0  # Clamp extra area in tile to 0.
 
-            # Calculate weight map, inverted cone.
+            # NEW FORMULA:
+            # cz, cy, cx = self.tile_centers[t_id]
+            # t_aabb = self.tile_aabbs[t_id]
+            # x_min = t_aabb[4]
+
+            # pyramid_base_hypo = (cx - x_min) * np.sqrt(2)  # Assuming square tile
+            # h = pyramid_base_hypo
+            # x_p = x_grid - cx  # Define coordinates wrt to center for rotation
+            # y_p = y_grid - cy
+
+            # x_p = (np.sqrt(2) / 2.) * (x_p + y_p)  # Rotate coordinates by pi / 4
+            # y_p = (np.sqrt(2) / 2.) * (x_p - y_p)
+            # # pyramid = h - (np.abs(x_p - cy) + \
+            # #                np.abs(y_p - cx))  # Resolve rotated coord val on AA-pyramid
+
+            # pyramid = h - (np.abs(x_p) + np.abs(y_p))
+
+            # pyramid[pyramid < 20] = 0  # Pad edges with 0
+
+            # distance_map = torch.Tensor(pyramid)   # This should have the right magnitude.
+
+            # NEW, NEW FORMULA:
+            # cz, cy, cx = self.tile_centers[t_id]
+            # t_aabb = self.tile_aabbs[t_id]
+            # x_min = t_aabb[4]
+
+            # pyramid_base_hypo = (cx - x_min) * np.sqrt(2)  # Assuming square tile
+            # h = pyramid_base_hypo
+
+            # # # NOTE: TEMP
+            # # h *= 2
+            # # h *= 0.75  # Want edge values to be zero.
+
+            # dist = np.sqrt(((x_grid - cx) * (x_grid - cx)) + \
+            #              + ((y_grid - cy) * (y_grid - cy)))  # Upward pyramid
+
+            # # dist = np.abs(x_grid - cx) + np.abs(y_grid - cy)
+
+            # influence = h - dist
+            # influence[influence < 10] = 0  # Pad edges with 0
+            # influence[influence < 0] = 0  # Downward pyramid
+
+            # NEw x3 formula
             cz, cy, cx = self.tile_centers[t_id]
             t_aabb = self.tile_aabbs[t_id]
-            y_min = t_aabb[2]
             x_min = t_aabb[4]
-            h = max(cy - y_min, cx - x_min)
-            distance_map = h - (torch.abs(x_grid - cx) + torch.abs(y_grid - cy))
-            distance_map = distance_map.unsqueeze(0).unsqueeze(0)  # Now a 5D Tensor
 
+            # pyramid_base_hypo = (cx - x_min) * np.sqrt(2)
+            # h = pyramid_base_hypo
+
+            influence = (cx - x_min) - torch.max(torch.abs(x_grid - cx), torch.abs(y_grid - cy))
+
+            distance_map = torch.Tensor(influence)
+
+            distance_map = distance_map.unsqueeze(0).unsqueeze(0)  # Now a 5D Tensor
             per_chunk_distance = distance_map * net_occupancy_map
             total_distance_map += per_chunk_distance
             per_chunk_distance_maps.append(per_chunk_distance)
 
+
+        plt.imshow(total_distance_map[0, 0, 0, :, :])
+        plt.colorbar()
+        plt.savefig(f'total_distance_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+        plt.clf()
+
+        for i, d_map in enumerate(per_chunk_distance_maps):
+            plt.imshow(d_map[0, 0, 0, :, :])
+            plt.colorbar()
+            plt.savefig(f'distance_map{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+            plt.clf()
+
         weight_maps: list[torch.Tensor] = []
         for d_map, c in zip(per_chunk_distance_maps, chunks):
             weight_map = d_map / total_distance_map
-            weight_map[d_map == 0] = 1
+            # weight_map[d_map == 0] = 1
             weight_maps.append(weight_map)
+
+        for i, c in enumerate(chunks):
+            plt.imshow(c[0, 0, 0, :, :])
+            plt.savefig(f'c{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+
+        for i, w_map in enumerate(weight_maps):
+            plt.imshow(w_map[0, 0, 0, :, :])
+            plt.colorbar()
+            plt.savefig(f'weight_map{i}_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+            plt.clf()
+
 
         # 3) Finally, blend all the chunks together.
         fused_chunk = torch.zeros(chunks[0].shape)
+
         for w, c in zip(weight_maps, chunks):
             w = w.to(device)
             c = c.to(device)
             fused_chunk += (w * c)
+
+        # Want to see a gradient over the entire image here.
+        # plt.imshow(fused_chunk[0, 0, 0, :, :])
+        # plt.colorbar()
+        # plt.savefig(f'fused_chunk_{cell_box[0]}_{cell_box[1]}_{cell_box[2]}.png')
+        # plt.clf()
+
 
         return fused_chunk
 
