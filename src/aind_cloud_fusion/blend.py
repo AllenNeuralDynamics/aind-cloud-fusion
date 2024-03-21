@@ -63,17 +63,17 @@ class MaxProjection(BlendingModule):
 
 def get_overlap_regions(tile_layout: list[list[int]],
                         tile_aabbs: dict[int, geometry.AABB]
-                        ) -> tuple[dict[int, list[int]], 
+                        ) -> tuple[dict[int, list[int]],
                                    dict[int, geometry.AABB]]:
     """
-    Input: 
+    Input:
     tile_layout: array of tile ids arranged corresponding to stage coordinates
     tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
-    
-    Output: 
+
+    Output:
     tile_to_overlap_ids: Maps tile_id to associated overlap region id
     overlaps: Maps overlap_id to actual overlap region AABB
-    
+
     Access pattern:
     tile_id -> overlap_id -> overlaps
     """
@@ -131,7 +131,7 @@ def get_overlap_regions(tile_layout: list[list[int]],
 
     # 2) Find overlap regions
     overlap_id = 0
-    for (id_1, id_2) in edges: 
+    for (id_1, id_2) in edges:
         aabb_1 = tile_aabbs[id_1]
         aabb_2 = tile_aabbs[id_2]
 
@@ -318,11 +318,13 @@ class SimpleAveraging(BlendingModule):
 class WeightedLinearBlending(BlendingModule):
     """
     Linear Blending with distance-based weights.
+    NOTE: Assumes
     """
 
     def __init__(self,
                  tile_layout: list[list[int]],
-                 tile_aabbs: dict[int, geometry.AABB]
+                 tile_aabbs: dict[int, geometry.AABB],
+                 weight_function: str = 'pyramid'
                  ) -> None:
         super().__init__()
         """
@@ -338,10 +340,11 @@ class WeightedLinearBlending(BlendingModule):
         # Define tile_centers for reference in conic weight function
         self.tile_centers: dict[int, tuple[float, float, float]] = {}
         for t_id, t_aabb in tile_aabbs.items():
-            mz, my, mx = (t_aabb[1] - t_aabb[0],
-                          t_aabb[3] - t_aabb[2],
-                          t_aabb[5] - t_aabb[4])
+            mz, my, mx = ((t_aabb[1] + t_aabb[0]) / 2.,
+                          (t_aabb[3] + t_aabb[2]) / 2.,
+                          (t_aabb[5] + t_aabb[4]) / 2.)
             self.tile_centers[t_id] = (mz, my, mx)
+        self.tile_aabbs = tile_aabbs
 
     def blend(self,
               chunks: list[torch.Tensor],
@@ -467,14 +470,16 @@ class WeightedLinearBlending(BlendingModule):
         # 2) Post-process occupancy maps into weight maps
         per_chunk_distance_maps: list[torch.Tensor] = []
         total_distance_map = torch.zeros(chunks[0].shape)
-        for t_id, t_maps in occupancy_maps.items():
+        for i, (t_id, t_maps) in enumerate(occupancy_maps.items()):
             # Logical-OR occupancy maps at tile level
+            # Net occupancy map is the net occupancy of each tile inside the chunk
             net_occupancy_map = torch.zeros(chunks[0].shape)
             for t_map in t_maps:
                 net_occupancy_map += t_map
             net_occupancy_map[net_occupancy_map > 1] = 1
 
-            # Each tile gets its own distance map
+            # Each tile gets its own 'distance' map.
+            # Distance map is an inverted cone centered wrt to each tile center.
             z_indices = torch.arange(cell_box[0], cell_box[1], step=1) + 0.5
             y_indices = torch.arange(cell_box[2], cell_box[3], step=1) + 0.5
             x_indices = torch.arange(cell_box[4], cell_box[5], step=1) + 0.5
@@ -482,12 +487,12 @@ class WeightedLinearBlending(BlendingModule):
                 z_indices, y_indices, x_indices, indexing="ij"  # {z_grid, y_grid, x_grid} are 3D Tensors
             )
             cz, cy, cx = self.tile_centers[t_id]
-            z_dist = torch.abs(z_grid - cz)
-            y_dist = torch.abs(y_grid - cy)
-            x_dist = torch.abs(x_grid - cx)
-            distance_map = 1 / (z_dist + y_dist + x_dist)  # Notion of distance decreases with distance from center
-            distance_map = distance_map.unsqueeze(0).unsqueeze(0)  # Now a 5D Tensor
+            t_aabb = self.tile_aabbs[t_id]
+            x_min = t_aabb[4]
+            influence = (cx - x_min) - torch.max(torch.abs(x_grid - cx), torch.abs(y_grid - cy))
 
+            distance_map = torch.Tensor(influence)
+            distance_map = distance_map.unsqueeze(0).unsqueeze(0)  # Now a 5D Tensor
             per_chunk_distance = distance_map * net_occupancy_map
             total_distance_map += per_chunk_distance
             per_chunk_distance_maps.append(per_chunk_distance)
@@ -500,6 +505,7 @@ class WeightedLinearBlending(BlendingModule):
 
         # 3) Finally, blend all the chunks together.
         fused_chunk = torch.zeros(chunks[0].shape)
+
         for w, c in zip(weight_maps, chunks):
             w = w.to(device)
             c = c.to(device)
@@ -553,7 +559,7 @@ def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
         iy = int(s_pos[1] / delta_y)
 
         tile_layout[iy, ix] = tile_id
-    
+
     tile_layout = tile_layout.astype(int)
 
     return tile_layout

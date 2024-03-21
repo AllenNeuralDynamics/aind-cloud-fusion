@@ -226,13 +226,6 @@ def get_cell_count_zyx(
     y_cnt = int(np.ceil(output_volume_size[1] / cell_size[1]))
     x_cnt = int(np.ceil(output_volume_size[2] / cell_size[2]))
 
-    # Zarr struggles with writing boundary chunks
-    # This is definitely a zarr library bug.
-    # Solution: simply do not write the boundary chunks
-    z_cnt = z_cnt - 1
-    y_cnt = y_cnt - 1
-    x_cnt = x_cnt - 1
-
     return z_cnt, y_cnt, x_cnt
 
 
