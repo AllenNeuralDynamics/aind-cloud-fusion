@@ -522,6 +522,9 @@ def color_cell(
         ):
             overlapping_tiles.append(tile_id)
 
+    print(f"Cell Box: {cell_box}")
+    print(f"Overlapping Tiles: {overlapping_tiles}")
+    
     # LOGGER.info(f"{cell_box=}")
     # LOGGER.info(f"{overlapping_tiles=}")
 
