@@ -14,6 +14,8 @@ from test_dataset import (
     generate_x_lin_blend_dataset,
     generate_y_lin_blend_dataset,
 )
+from test_dataset_real import generate_real_dataset
+
 
 class TestFusion(unittest.TestCase):
     def setUp(self):
@@ -145,6 +147,56 @@ class TestFusion(unittest.TestCase):
         self.assertTrue(np.all(np.abs(fused_data - ground_truth) < 2))
 
         # self.assertTrue(np.allclose(fused_data, ground_truth))
+
+    def test_fusion_on_real_data(self):
+        # Generate Dataset
+        ground_truth, DATASET = generate_real_dataset()
+
+        zarr_path = str(
+            Path(self.output_path) / "fused_real_data.zarr"
+        )
+
+        OUTPUT_PARAMS = io.OutputParameters(
+            path=zarr_path,
+            chunksize=(1, 1, 100, 100, 100),
+            resolution_zyx=(1.0, 0.256, 0.256),  # Preserving original resolution.
+        )
+        RUNTIME_PARAMS = io.RuntimeParameters(
+            option=0,
+            pool_size=16,
+            worker_cells=[]
+        )
+        POST_REG_TFMS = []
+        CELL_SIZE = [100, 100, 100]
+
+        # Init and Run Fusion
+        worker_cells = []
+        _, _, _, tile_aabbs, output_volume_size, _ = fusion.initialize_fusion(
+            DATASET, POST_REG_TFMS, OUTPUT_PARAMS
+        )
+        z_cnt, y_cnt, x_cnt = fusion.get_cell_count_zyx(
+            output_volume_size, CELL_SIZE
+        )
+        for z in range(z_cnt):
+            for y in range(y_cnt):
+                for x in range(x_cnt):
+                    worker_cells.append((z, y, x))
+        RUNTIME_PARAMS.worker_cells = worker_cells
+
+        tile_layout = [[5, 6]]  # Tile 5 and 6 are adjacent in x.
+        BLENDING_MODULE = blend.WeightedLinearBlending(tile_layout=tile_layout,
+                                                    tile_aabbs=tile_aabbs)
+
+        fusion.run_fusion(DATASET,
+                        OUTPUT_PARAMS,
+                        RUNTIME_PARAMS,
+                        CELL_SIZE,
+                        POST_REG_TFMS,
+                        BLENDING_MODULE)
+
+        # Read output and compare with ground truth
+        fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)
+        self.assertTrue(np.all(np.abs(fused_data - ground_truth) < 2))
 
     def tearDown(self):
         # Delete test volumes.
