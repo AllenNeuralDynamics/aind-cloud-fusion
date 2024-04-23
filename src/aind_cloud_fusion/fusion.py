@@ -215,6 +215,54 @@ def initialize_output_volume(
     return output_volume
 
 
+def initialize_output_volume_tensorstore(
+    output_params: io.OutputParameters,
+    output_volume_size: tuple[int, int, int],
+):
+    """
+    The output is an async Tensorstore obj that you need 
+    to call .result() to perform a write. 
+    """
+    parts = output_params.path.split('/')
+    bucket_name = parts[2]
+    path = '/'.join(parts[3:])
+    chunksize = list(output_params.chunksize)
+    output_shape = [1, 
+                    1, 
+                    output_volume_size[0],
+                    output_volume_size[1],
+                    output_volume_size[2]]
+
+    return ts.open({
+        'driver': 'zarr', 
+        'dtype': 'uint16',
+        'kvstore' : {
+            'driver': 's3',
+            'bucket': bucket,
+            'path': path, 
+        }, 
+        'create': True,
+        'delete_existing': True, 
+        'metadata': {
+            'chunks': chunksize,
+            'compressor': {
+                'blocksize': 0,
+                'clevel': 1,
+                'cname': 'zstd',
+                'id': 'blosc',
+                'shuffle': 1,
+            },
+            'dimension_separator': '/',
+            'dtype': '<u2',
+            'fill_value': 0,
+            'filters': None,
+            'order': 'C',
+            'shape': shape,
+            'zarr_format': 2
+        }
+    }).result()
+
+
 def get_cell_count_zyx(
     output_volume_size: tuple[int, int, int], cell_size: tuple[int, int, int]
 ) -> tuple[int, int, int]:
@@ -257,7 +305,11 @@ def run_fusion(
     tile_aabbs = d
     output_volume_size = e
     output_volume_origin = f  # Temp variables to meet line character maximum.
-    output_volume = initialize_output_volume(output_params, output_volume_size)
+    
+    # Replacing with a tensorstore volume: 
+    # output_volume = initialize_output_volume(output_params, output_volume_size)
+    output_volume = initialize_output_volume_tensorstore(output_params, output_volume_size)
+    
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
 
@@ -681,7 +733,10 @@ def color_cell(
     )
     # Convert from float32 -> canonical uint16
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
-    output_volume[output_slice] = output_chunk
+    
+    # Replacing this with a tensorstore write
+    # output_volume[output_slice] = output_chunk
+    output_volume[output_slice].write(output_chunk).result()
 
     del fused_cell
     del output_chunk
