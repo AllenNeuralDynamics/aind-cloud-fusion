@@ -225,7 +225,7 @@ def initialize_output_volume_tensorstore(
     to call .result() to perform a write. 
     """
     parts = output_params.path.split('/')
-    bucket_name = parts[2]
+    bucket = parts[2]
     path = '/'.join(parts[3:])
     chunksize = list(output_params.chunksize)
     output_shape = [1, 
@@ -258,7 +258,7 @@ def initialize_output_volume_tensorstore(
             'fill_value': 0,
             'filters': None,
             'order': 'C',
-            'shape': shape,
+            'shape': output_shape,
             'zarr_format': 2
         }
     }).result()
