@@ -24,7 +24,8 @@ dependencies = [
     's3fs==2023.9.2',
     'dask[distributed]==2024.1.0',
     'Pillow==10.1.0',
-    'boto3'
+    'boto3',
+    'tensorstore==0.1.56'
 ]
 
 [project.optional-dependencies]
