@@ -243,7 +243,7 @@ def initialize_output_volume_tensorstore(
             'path': path, 
         }, 
         'create': True,
-        'delete_existing': True, 
+        'open': True,
         'metadata': {
             'chunks': chunksize,
             'compressor': {
