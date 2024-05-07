@@ -271,11 +271,6 @@ def run_fusion(
             z, y, x = cell
             process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
 
-        # DEBUGGING: Temporarily overwrite process args with single chunk
-        # process_args = []
-        # process_args.append({"cell_num": 0, "z": 1, "y": 4, "x": 43})
-        # num_cells = 1
-
         for p_args in process_args:
             LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
             start_time = time.time()
@@ -610,7 +605,11 @@ def color_cell(
             slice(crop_min_y, crop_max_y),
             slice(crop_min_x, crop_max_x),
         )
+
         image_crop = tile_arrays[tile_id][image_crop_slice]
+        if isinstance(image_crop, da.Array):
+            image_crop = image_crop.compute()
+
         image_crop = image_crop.astype(
             np.int32
         )  # Promote uint16 -> Pytorch compatible int32
