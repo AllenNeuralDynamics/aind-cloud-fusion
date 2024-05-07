@@ -386,7 +386,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             # Data loading
             match = None
             channel_num = 0
-            pattern = r'(\d{1})\.zarr$'
+            pattern = r'(\d*)\.zarr.?$'
             match = re.search(pattern, p) 
 
 
