@@ -11,6 +11,7 @@ import numpy as np
 from numcodecs import Blosc
 import re
 import s3fs
+import torch
 import xmltodict
 import yaml
 import zarr
@@ -47,7 +48,7 @@ class ZarrArray(LazyArray):
         self.arr = arr
 
     def __getitem__(self, slice):
-        return np.array(self.arr[slice].compute())
+        return self.arr[slice].compute()
 
     @property
     def shape(self):
@@ -99,19 +100,9 @@ class Dataset:
 
 
 class BigStitcherDataset(Dataset):
-    """
-    Dataset class for loading in BigStitcher Dataset.
-    Intended for the base registration channel.
-    """
-
-    def __init__(self, xml_path: str, s3_path: str, level: int = 0):
+    def __init__(self, xml_path: str, s3_path: str):
         self.xml_path = xml_path
         self.s3_path = s3_path
-
-        allowed_levels = [0, 1, 2, 3, 4, 5]
-        assert level in allowed_levels, \
-            f"Level {level} is not in {allowed_levels}"
-        self.level = level
 
     @property
     def tile_volumes_tczyx(self) -> dict[int, LazyArray]:
@@ -119,9 +110,7 @@ class BigStitcherDataset(Dataset):
         for t_id, t_path in tile_paths.items():
             if not self.s3_path.endswith('/'):
                 self.s3_path = self.s3_path + '/'
-
-            level_str = '/' + str(self.level)  # Ex: '/0'
-            tile_paths[t_id] = self.s3_path + Path(t_path).name + level_str
+            tile_paths[t_id] = self.s3_path + Path(t_path).name + '/0'
 
         tile_arrays: dict[int, LazyArray] = {}
         for tile_id, t_path in tile_paths.items():
@@ -168,21 +157,8 @@ class BigStitcherDataset(Dataset):
             tmp[:, [0, 2]] = tmp[:, [2, 0]]
             tfm = tmp
 
-            # Assemble matrix stack:
-            # 1) Add base registration
-            matrix_stack = [geometry.Affine(tfm)]
-
-            # 2) Append up/down-sampling transforms
-            sf = 2. ** self.level
-            up = geometry.Affine(np.array([[sf, 0., 0., 0.],
-                                           [0., sf, 0., 0.],
-                                           [0., 0., sf, 0.]]))
-            down = geometry.Affine(np.array([[1./sf, 0., 0., 0.],
-                                             [0., 1./sf, 0., 0.],
-                                             [0., 0., 1./sf, 0.]]))
-            matrix_stack.insert(0, up)
-            matrix_stack.append(down)
-            tile_net_tfms[int(tile_id)] = matrix_stack
+            # Pack into list
+            tile_net_tfms[int(tile_id)] = [geometry.Affine(tfm)]
 
         return tile_net_tfms
 
@@ -333,14 +309,15 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
     Convenience Dataset class that reuses tile registrations,
     tile shapes, and tile resolution across channels.
     Tile volumes is overloaded with channel-specific data.
-
-    NOTE: Only loads full resolution images/registrations.
     """
 
     def __init__(self, xml_path: str, s3_path: str, channel_num: int):
         """
         Only new information required is channel number.
         """
+
+        if s3_path[-1]!= '/':
+            s3_path += '/'
         super().__init__(xml_path, s3_path)
         self.channel_num = channel_num
 
@@ -353,25 +330,25 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
         with open(self.xml_path, "r") as file:
             data: OrderedDict = xmltodict.parse(file.read())
-        len_tile_id = 0
+        tile_id_lut = {}
         for zgroup in data['SpimData']['SequenceDescription']['ImageLoader']['zgroups']['zgroup']:
             tile_id = zgroup['@setup']
             tile_name = zgroup['path']
-            #s_parts = tile_name.split('_')
-            #location = (int(s_parts[2]), 
-            #            int(s_parts[4]), 
-            #            int(s_parts[6]))
-            #tile_id_lut[location] = int(tile_id)
-            len_tile_id+=1
-
+            s_parts = tile_name.split('_')
+            location = (int(s_parts[2]),
+                        int(s_parts[4]),
+                        int(s_parts[6]))
+            tile_id_lut[location] = int(tile_id)
 
         # Reference path: s3://aind-open-data/HCR_677594_2023-10-20_15-10-36/SPIM.ome.zarr/
         slash_2 = self.s3_path.find('/', self.s3_path.find('/') + 1)
         slash_3 = self.s3_path.find('/', self.s3_path.find('/', self.s3_path.find('/') + 1) + 1)
         bucket_name = self.s3_path[slash_2 + 1:slash_3]
         directory_path = self.s3_path[slash_3 + 1:]
+        if directory_path[-1] != '/':
+            directory_path +='/'
 
-        # pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
+        pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
         for p in self._list_bucket_directory(bucket_name, directory_path):
             if p.endswith('.zgroup'):
                 continue
@@ -387,8 +364,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             match = None
             channel_num = 0
             pattern = r'(\d*)\.zarr.?$'
-            match = re.search(pattern, p) 
-
+            match = re.search(pattern, p)
 
             if match:
                 channel_num = int(match.group(1))
@@ -399,25 +375,17 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                 tile_zarr = da.from_zarr(full_resolution_p)
                 tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
 
-                tile_id_from_name_pattern = r'TILE_(\d{4})'
-                tile_id_from_name_match = re.search(tile_id_from_name_pattern, p)
-
-                if tile_id_from_name_match:
-                    tile_id_from_name = int(tile_id_from_name_match.group(1))
-                else: 
-                    print("Error getting tile id number")
-                #s_parts = p.split('_')
-                #location = (int(s_parts[2]), 
-                #            int(s_parts[4]), 
-                #            int(s_parts[6]))
-                tile_id = tile_id_from_name
-
+                s_parts = p.split('_')
+                location = (int(s_parts[2]),
+                            int(s_parts[4]),
+                            int(s_parts[6]))
+                tile_id = tile_id_lut[location]
 
                 # tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
                 # tile_arrays[int(tile_id)] = ZarrArray(tile_zarr_zyx)
                 # ^Although not computed, causes a large task graph.
 
-                print(f'Loading Tile {tile_id} / {(len_tile_id)}')
+                print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
                 tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
 
         return tile_arrays
@@ -452,6 +420,20 @@ class OutputParameters:
     dtype: np.dtype = np.uint16
     dimension_separator: str = "/"
     compressor = Blosc(cname='zstd', clevel=1, shuffle=Blosc.SHUFFLE)
+
+
+# class RuntimeParameters:
+#     def __init__(
+#         self,
+#         use_gpus: bool,
+#         devices: list[torch.cuda.device],
+#         pool_size: int,
+#         worker_cells: list[tuple[int, int, int]] = [],
+#     ):
+#         self.use_gpus = use_gpus
+#         self.devices = devices
+#         self.pool_size = pool_size
+#         self.worker_cells = worker_cells
 
 @dataclass
 class RuntimeParameters:
