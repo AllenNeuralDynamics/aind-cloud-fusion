@@ -11,6 +11,7 @@ import numpy as np
 from numcodecs import Blosc
 import re
 import s3fs
+import tensorstore as ts
 import xmltodict
 import yaml
 import zarr
@@ -29,6 +30,16 @@ def write_config_yaml(yaml_path: str, yaml_data: dict) -> None:
         yaml.dump(yaml_data, file)
 
 
+def open_zarr_s3(bucket: str, path: str) -> ts.TensorStore:
+    return ts.open({
+        'driver': 'zarr',
+        'kvstore': {
+            'driver': 'http',
+            'base_url': f'https://{bucket}.s3.us-west-2.amazonaws.com/{path}',
+        },
+    }).result()
+
+
 class LazyArray:
     def __getitem__(self, value):
         """
@@ -42,12 +53,25 @@ class LazyArray:
         raise NotImplementedError("Please implement in LazyArray subclass.")
 
 
+# (DEPRECIATED)
 class ZarrArray(LazyArray):
     def __init__(self, arr: da.Array):
         self.arr = arr
 
     def __getitem__(self, slice):
         return np.array(self.arr[slice].compute())
+
+    @property
+    def shape(self):
+        return self.arr.shape
+
+
+class ZarrArray(LazyArray):
+    def __init__(self, arr: ts.TensorStore):
+        self.arr = arr
+
+    def __getitem__(self, slice):
+        return np.array(self.arr[slice])
 
     @property
     def shape(self):
@@ -125,31 +149,17 @@ class BigStitcherDataset(Dataset):
 
         tile_arrays: dict[int, LazyArray] = {}
         for tile_id, t_path in tile_paths.items():
+
+            # Referencing the following naming convention:
+            # s3://BUCKET_NAME/DATASET_NAME/TILE/NAME/CHANNEL
+            parts = t_path.split('/')
+            bucket = parts[2]
+            third_slash_index = len(parts[0]) + len(parts[1]) + len(parts[2]) + 3
+            obj = t_path[third_slash_index:]
+
+            tile_zarr = open_zarr_s3(bucket, obj)
+
             print(f'Loading Tile {tile_id} / {len(tile_paths)}')
-
-            tile_zarr = da.from_zarr(t_path)
-
-            # Replacing this with an s3fs with higher read concurrency.
-            s3 = s3fs.S3FileSystem(
-            config_kwargs={
-                    'max_pool_connections': 50,
-                    's3': {
-                      'max_concurrent_requests': 20  # Increased 10->20.
-                    }, # Compute instances are in-network of s3 buckets.
-                    'retries': {
-                      'total_max_attempts': 100,
-                      'mode': 'adaptive',
-                    }
-                }
-            )
-            store = s3fs.S3Map(root=t_path, s3=s3)
-            in_group = zarr.open(store=store, mode='r')
-            tile_zarr = da.from_zarr(in_group)
-
-            # tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
-            # tile_arrays[int(tile_id)] = ZarrArray(tile_zarr_zyx)
-            # ^Although not computed, causes a large task graph.
-
             tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
 
         return tile_arrays
@@ -390,24 +400,26 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             if match:
                 channel_num = int(match.group(1))
 
-
             if channel_num == self.channel_num:
                 full_resolution_p = self.s3_path + p + '/0'
-                tile_zarr = da.from_zarr(full_resolution_p)
-                tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
 
+                # Referencing the following naming convention:
+                # s3://BUCKET_NAME/DATASET_NAME/TILE/NAME/CHANNEL
+                parts = full_resolution_p.split('/')
+                bucket = parts[2]
+                third_slash_index = len(parts[0]) + len(parts[1]) + len(parts[2]) + 3
+                obj = full_resolution_p[third_slash_index:]
+
+                tile_zarr = open_zarr_s3(bucket, obj)
                 s_parts = p.split('_')
                 location = (int(s_parts[2]),
                             int(s_parts[4]),
                             int(s_parts[6]))
                 tile_id = tile_id_lut[location]
 
-                # tile_zarr_zyx = tile_zarr[0, 0, :, :, :]
-                # tile_arrays[int(tile_id)] = ZarrArray(tile_zarr_zyx)
-                # ^Although not computed, causes a large task graph.
-
                 print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
                 tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
+
 
         return tile_arrays
 
