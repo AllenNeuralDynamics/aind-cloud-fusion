@@ -1,6 +1,8 @@
 """
 Interface for generic blending.
 """
+
+import dask.array as da
 import numpy as np
 import torch
 import xmltodict
@@ -318,12 +320,16 @@ class SimpleAveraging(BlendingModule):
 class WeightedLinearBlending(BlendingModule):
     """
     Linear Blending with distance-based weights.
-    NOTE: Assumes
+    NOTE: Only supports translation-only registration.
+    To modify for affine registration:
+    - Forward transform overlap weights into output volume.
+    - Inverse transform for local weights.
     """
 
     def __init__(self,
                  tile_layout: list[list[int]],
                  tile_aabbs: dict[int, geometry.AABB],
+                 output_volume_size: tuple[int, int, int],
                  weight_function: str = 'pyramid'
                  ) -> None:
         super().__init__()
@@ -331,11 +337,6 @@ class WeightedLinearBlending(BlendingModule):
         tile_layout: array of tile ids arranged corresponding to stage coordinates
         tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
         """
-
-        # Create mask data structures
-        self.tile_to_overlap_ids: dict[int, list[int]] = defaultdict(list)
-        self.overlaps: dict[int, geometry.AABB] = {}
-        self.tile_to_overlap_ids, self.overlaps = get_overlap_regions(tile_layout, tile_aabbs)
 
         # Define tile_centers for reference in conic weight function
         self.tile_centers: dict[int, tuple[float, float, float]] = {}
@@ -375,144 +376,66 @@ class WeightedLinearBlending(BlendingModule):
         chunk_tile_ids = kwargs['chunk_tile_ids']
         cell_box = kwargs['cell_box']
 
-        # 1) Derive occupancy maps
-        occupancy_maps: dict[list[torch.Tensor]] = defaultdict(list)
-        for t_id in chunk_tile_ids:
-            for o_id in self.tile_to_overlap_ids[t_id]:
-                # Each tile has potentially many overlap regions.
-                # Check if the current chunk is within the current overlap before proceeding.
-                o_aabb = self.overlaps[o_id]
-                chunk_outside_overlap_region = ((cell_box[1] <= o_aabb[0] or o_aabb[1] <= cell_box[0]) or
-                                                (cell_box[3] <= o_aabb[2] or o_aabb[3] <= cell_box[2]) or
-                                                (cell_box[5] <= o_aabb[4] or o_aabb[5] <= cell_box[4]))
-                if chunk_outside_overlap_region:
-                    continue
+        # Calculate local weight masks
+        local_weights: list[torch.Tensor] = []
+        total_weight: torch.Tensor = torch.zeros(chunks[0].shape)
+        for tile_id, chunk in zip(chunk_tile_ids, chunks):
+            tile_aabb = self.tile_aabbs[tile_id]
+            aabb_pos_z = tile_aabb[0]
+            aabb_pos_y = tile_aabb[2]
+            aabb_pos_x = tile_aabb[4]
+            tile_center_zyx = self.tile_centers[tile_id]
 
-                # To be modified in the following colision checks.
-                occupancy_map = torch.zeros(chunks[0].shape)
-                MASK_SLICE = [slice(None), slice(None), slice(None), slice(None), slice(None)]
-
-                # Derive Occupancy Map for full chunk coverings in each dimension
-                # chunk: (---)
-                # overlap: [---]
-                # Ex: (---[-----]---)
-                chunk_covers_overlap_z = (cell_box[0] < o_aabb[0] and o_aabb[1] < cell_box[1])
-                chunk_covers_overlap_y = (cell_box[2] < o_aabb[2] and o_aabb[3] < cell_box[3])
-                chunk_covers_overlap_x = (cell_box[4] < o_aabb[4] and o_aabb[5] < cell_box[5])
-                if chunk_covers_overlap_z:
-                    start_index = round(o_aabb[0] - cell_box[0])
-                    end_index = round(o_aabb[1] - cell_box[0])
-                    MASK_SLICE[2] = slice(start_index, end_index)
-
-                if chunk_covers_overlap_y:
-                    start_index = round(o_aabb[2] - cell_box[2])
-                    end_index = round(o_aabb[3] - cell_box[2])
-                    MASK_SLICE[3] = slice(start_index, end_index)
-
-                if chunk_covers_overlap_x:
-                    start_index = round(o_aabb[4] - cell_box[4])
-                    end_index = round(o_aabb[5] - cell_box[4])
-                    MASK_SLICE[4] = slice(start_index, end_index)
-
-                # Derive Occupancy Map for full overlap coverings in each dimension
-                # chunk: (---)
-                # overlap: [---]
-                # Ex: [---(-----)---]
-                overlap_covers_chunk_z = (o_aabb[0] <= cell_box[0] and cell_box[1] <= o_aabb[1])
-                overlap_covers_chunk_y = (o_aabb[2] <= cell_box[2] and cell_box[3] <= o_aabb[3])
-                overlap_covers_chunk_x = (o_aabb[4] <= cell_box[4] and cell_box[5] <= o_aabb[5])
-                if overlap_covers_chunk_z:
-                    MASK_SLICE[2] = slice(None)
-                if overlap_covers_chunk_y:
-                    MASK_SLICE[3] = slice(None)
-                if overlap_covers_chunk_x:
-                    MASK_SLICE[4] = slice(None)
-
-                # Derive Occupancy Map for partial chunk coverings in each dimension
-                # chunk: (---)
-                # overlap: [---]
-                # Ex: (---[------)---] or [---(-----]--)
-                chunk_covers_min_overlap_z = (cell_box[0] < o_aabb[0] and
-                                              o_aabb[0] < cell_box[1] and cell_box[1] <= o_aabb[1])
-                chunk_covers_min_overlap_y = (cell_box[2] < o_aabb[2] and
-                                              o_aabb[2] < cell_box[3] and cell_box[3] <= o_aabb[3])
-                chunk_covers_min_overlap_x = (cell_box[4] < o_aabb[4] and
-                                              o_aabb[4] < cell_box[5] and cell_box[5] <= o_aabb[5])
-                if chunk_covers_min_overlap_z:
-                    start_index = round(o_aabb[0] - cell_box[0])
-                    MASK_SLICE[2] = slice(start_index, None)
-                if chunk_covers_min_overlap_y:
-                    start_index = round(o_aabb[2] - cell_box[2])
-                    MASK_SLICE[3] = slice(start_index, None)
-                if chunk_covers_min_overlap_x:
-                    start_index = round(o_aabb[4] - cell_box[4])
-                    MASK_SLICE[4] = slice(start_index, None)
-
-                chunk_covers_max_overlap_z = (o_aabb[0] <= cell_box[0] and cell_box[0] < o_aabb[1] and
-                                              o_aabb[1] < cell_box[1])
-                chunk_covers_max_overlap_y = (o_aabb[2] <= cell_box[2] and cell_box[2] < o_aabb[3] and
-                                              o_aabb[3] < cell_box[3])
-                chunk_covers_max_overlap_x = (o_aabb[4] <= cell_box[4] and cell_box[4] < o_aabb[5] and
-                                              o_aabb[5] < cell_box[5])
-                if chunk_covers_max_overlap_z:
-                    end_index = round(o_aabb[1] - cell_box[0])
-                    MASK_SLICE[2] = slice(0, end_index)
-                if chunk_covers_max_overlap_y:
-                    end_index = round(o_aabb[3] - cell_box[2])
-                    MASK_SLICE[3] = slice(0, end_index)
-                if chunk_covers_max_overlap_x:
-                    end_index = round(o_aabb[5] - cell_box[4])
-                    MASK_SLICE[4] = slice(0, end_index)
-
-                occupancy_map[MASK_SLICE] = 1
-                occupancy_maps[t_id].append(occupancy_map)
-
-        # 2) Post-process occupancy maps into weight maps
-        per_chunk_distance_maps: list[torch.Tensor] = []
-        total_distance_map = torch.zeros(chunks[0].shape)
-        for i, (t_id, t_maps) in enumerate(occupancy_maps.items()):
-            # Logical-OR occupancy maps at tile level
-            # Net occupancy map is the net occupancy of each tile inside the chunk
-            net_occupancy_map = torch.zeros(chunks[0].shape)
-            for t_map in t_maps:
-                net_occupancy_map += t_map
-            net_occupancy_map[net_occupancy_map > 1] = 1
-
-            # Each tile gets its own 'distance' map.
-            # Distance map is an inverted cone centered wrt to each tile center.
             z_indices = torch.arange(cell_box[0], cell_box[1], step=1) + 0.5
             y_indices = torch.arange(cell_box[2], cell_box[3], step=1) + 0.5
             x_indices = torch.arange(cell_box[4], cell_box[5], step=1) + 0.5
+            z_indices -= aabb_pos_z
+            y_indices -= aabb_pos_y
+            x_indices -= aabb_pos_x
             z_grid, y_grid, x_grid = torch.meshgrid(
                 z_indices, y_indices, x_indices, indexing="ij"  # {z_grid, y_grid, x_grid} are 3D Tensors
             )
-            cz, cy, cx = self.tile_centers[t_id]
-            t_aabb = self.tile_aabbs[t_id]
-            x_min = t_aabb[4]
-            influence = (cx - x_min) - torch.max(torch.abs(x_grid - cx), torch.abs(y_grid - cy))
 
-            distance_map = torch.Tensor(influence)
-            distance_map = distance_map.unsqueeze(0).unsqueeze(0)  # Now a 5D Tensor
-            per_chunk_distance = distance_map * net_occupancy_map
-            total_distance_map += per_chunk_distance
-            per_chunk_distance_maps.append(per_chunk_distance)
+            # Weight formula:
+            # 1) Apply pyramid function wrt to center of square tile.
+            # For each incoming chunk, a chunk may only have partial signal,
+            # representing cells that lie between two tiles.
+            # 2) After calculating pyramid weights, confine weights to actual boundary
+            # of image, represented by position of non-zero values in chunk.
+            _, cy, cx = tile_center_zyx
+            x_min = aabb_pos_x
+            weights = (cx - x_min) - torch.max(torch.abs(x_grid - cx), torch.abs(y_grid - cy))
+            signal_mask = torch.clamp(chunk, 0, 1)
+            inbound_weights = weights * signal_mask
 
-        weight_maps: list[torch.Tensor] = []
-        for d_map, c in zip(per_chunk_distance_maps, chunks):
-            weight_map = d_map / total_distance_map
-            weight_map[d_map == 0] = 1
-            weight_maps.append(weight_map)
+            local_weights.append(inbound_weights)
+            total_weight += inbound_weights
 
-        # 3) Finally, blend all the chunks together.
+        # Calculate fused chunk
         fused_chunk = torch.zeros(chunks[0].shape)
 
-        for w, c in zip(weight_maps, chunks):
+        for w, c in zip(local_weights, chunks):
             w = w.to(device)
             c = c.to(device)
             fused_chunk += (w * c)
 
         return fused_chunk
 
+        # Now test. 
+
+        # (try later the generalized form)
+        # That is, querying the original imagespace weights by sending
+        # signal through inverse transform and caluclating weight function wrt to original
+        # absolute tile center. (Here I am subtracting wrt to the transformed tile center, which is fine
+        # for non-affine.)
+
+        # This is not a very involved modification and keeps with modularity.
+
+        # Also realizing this implementation can serve as base for other weight functions.
+        # With this base blending, you can derive all linear blending:
+        # - Simple Averaging
+        # - Pyramid Blending
+        # - Order-based Blending
 
 def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
     """

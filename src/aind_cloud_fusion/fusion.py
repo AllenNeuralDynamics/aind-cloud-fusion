@@ -152,7 +152,7 @@ def initialize_fusion(
         OUTPUT_VOLUME_ORIGIN,
     )
 
-
+# (DEPRECIATED)
 def initialize_output_volume(
     output_params: io.OutputParameters,
     output_volume_size: tuple[int, int, int],
@@ -221,27 +221,27 @@ def initialize_output_volume_tensorstore(
     output_volume_size: tuple[int, int, int],
 ):
     """
-    The output is an async Tensorstore obj that you need 
-    to call .result() to perform a write. 
+    The output is an async Tensorstore obj that you need
+    to call .result() to perform a write.
     """
     parts = output_params.path.split('/')
     bucket = parts[2]
     path = '/'.join(parts[3:])
     chunksize = list(output_params.chunksize)
-    output_shape = [1, 
-                    1, 
+    output_shape = [1,
+                    1,
                     output_volume_size[0],
                     output_volume_size[1],
                     output_volume_size[2]]
 
     return ts.open({
-        'driver': 'zarr', 
+        'driver': 'zarr',
         'dtype': 'uint16',
         'kvstore' : {
             'driver': 's3',
             'bucket': bucket,
-            'path': path, 
-        }, 
+            'path': path,
+        },
         'create': True,
         'open': True,
         'metadata': {
@@ -306,11 +306,11 @@ def run_fusion(
     tile_aabbs = d
     output_volume_size = e
     output_volume_origin = f  # Temp variables to meet line character maximum.
-    
-    # Replacing with a tensorstore volume: 
+
+    # Replacing with a tensorstore volume:
     # output_volume = initialize_output_volume(output_params, output_volume_size)
     output_volume = initialize_output_volume_tensorstore(output_params, output_volume_size)
-    
+
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
 
@@ -734,7 +734,7 @@ def color_cell(
     )
     # Convert from float32 -> canonical uint16
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
-    
+
     # Replacing this with a tensorstore write
     # output_volume[output_slice] = output_chunk
     output_volume[output_slice].write(output_chunk).result()
