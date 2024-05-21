@@ -39,7 +39,7 @@ class TestFusion(unittest.TestCase):
         # following fusion initalization.
 
         # Application Parameter: CELL_SIZE
-        self.CELL_SIZE = [100, 100, 100]
+        self.CELL_SIZE = [100, 100, 75]
 
         # Application Parameter: POST_REG_TFMS
         self.POST_REG_TFMS: list[geometry.Affine] = []
@@ -85,9 +85,7 @@ class TestFusion(unittest.TestCase):
         self.RUNTIME_PARAMS.worker_cells = worker_cells
 
         # Set Blending parameters here
-        tile_layout = [[0, 1]]
-        self.BLENDING_MODULE = blend.WeightedLinearBlending(tile_layout=tile_layout,
-                                                            tile_aabbs=tile_aabbs)
+        self.BLENDING_MODULE = blend.WeightedLinearBlending(tile_aabbs=tile_aabbs)
 
         fusion.run_fusion(DATASET,
                           OUTPUT_PARAMS,
@@ -99,8 +97,7 @@ class TestFusion(unittest.TestCase):
         # Read output and compare with ground truth
         fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)
         self.assertTrue(np.all(np.abs(fused_data - ground_truth) < 2))
-        # self.assertTrue(np.allclose(fused_data, ground_truth.astype('float64')))
-
+        
 
     def test_fusion_in_y_axis(self):
         # Generate Dataset
@@ -130,10 +127,7 @@ class TestFusion(unittest.TestCase):
                     worker_cells.append((z, y, x))
         self.RUNTIME_PARAMS.worker_cells = worker_cells
 
-        tile_layout = [[0],
-                       [1]]
-        self.BLENDING_MODULE = blend.WeightedLinearBlending(tile_layout=tile_layout,
-                                                            tile_aabbs=tile_aabbs)
+        self.BLENDING_MODULE = blend.WeightedLinearBlending(tile_aabbs=tile_aabbs)
 
         fusion.run_fusion(DATASET,
                           OUTPUT_PARAMS,
@@ -145,8 +139,6 @@ class TestFusion(unittest.TestCase):
         # Read output and compare with ground truth
         fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)
         self.assertTrue(np.all(np.abs(fused_data - ground_truth) < 2))
-
-        # self.assertTrue(np.allclose(fused_data, ground_truth))
 
     def test_fusion_on_real_data(self):
         # Generate Dataset
@@ -183,9 +175,7 @@ class TestFusion(unittest.TestCase):
                     worker_cells.append((z, y, x))
         RUNTIME_PARAMS.worker_cells = worker_cells
 
-        tile_layout = [[5, 6]]  # Tile 5 and 6 are adjacent in x.
-        BLENDING_MODULE = blend.WeightedLinearBlending(tile_layout=tile_layout,
-                                                    tile_aabbs=tile_aabbs)
+        BLENDING_MODULE = blend.WeightedLinearBlending(tile_aabbs=tile_aabbs)
 
         fusion.run_fusion(DATASET,
                         OUTPUT_PARAMS,

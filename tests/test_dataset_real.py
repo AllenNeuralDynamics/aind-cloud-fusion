@@ -44,8 +44,8 @@ class TestDatasetReal(io.Dataset):
         # tile_6_net_zyx: [116, 1853, 3657]
 
         P_inverse = geometry.Affine(np.array([[4., 0., 0., 0.],
-                                      [0., 4., 0., 0.],
-                                      [0., 0., 4., 0.]]))
+                                              [0., 4., 0., 0.],
+                                              [0., 0., 4., 0.]]))
         P = geometry.Affine(np.array([[0.25, 0., 0., 0.],
                                       [0., 0.25, 0., 0.],
                                       [0., 0., 0.25, 0.]]))
@@ -117,9 +117,3 @@ if __name__ == '__main__':
                       CELL_SIZE,
                       POST_REG_TFMS,
                       BLENDING_MODULE)
-
-    # To check:
-    # 1) (DONE) Runs through
-    # 2) (DONE) Check if things look correct.
-    # 3) (DONE) Finish writing test, cleanup this file.
-    # 4) Push branch with test and feature.
