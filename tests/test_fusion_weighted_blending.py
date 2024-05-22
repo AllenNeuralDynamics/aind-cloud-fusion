@@ -68,6 +68,7 @@ class TestFusion(unittest.TestCase):
             path=zarr_path,
             chunksize=(1, 1, 100, 100, 100),
             resolution_zyx=(1.0, 1.0, 1.0),
+            datastore=0
         )
 
         # Init and Run Fusion
@@ -111,6 +112,7 @@ class TestFusion(unittest.TestCase):
             path=zarr_path,
             chunksize=(1, 1, 100, 100, 100),
             resolution_zyx=(1.0, 1.0, 1.0),
+            datastore=0
         )
 
         # Init and Run Fusion
@@ -152,6 +154,7 @@ class TestFusion(unittest.TestCase):
             path=zarr_path,
             chunksize=(1, 1, 100, 100, 100),
             resolution_zyx=(1.0, 0.256, 0.256),  # Preserving original resolution.
+            datastore=0
         )
         RUNTIME_PARAMS = io.RuntimeParameters(
             option=0,

@@ -23,7 +23,7 @@ class TestDataset(io.Dataset):
         self.input_resolution_zyx = input_resolution_zyx
 
     @property
-    def tile_volumes_tczyx(self) -> dict[int, io.LazyArray]:
+    def tile_volumes_tczyx(self) -> dict[int, io.InputArray]:
         tile_volumes = {0: self.tile_1_zyx, 1: self.tile_2_zyx}
         return tile_volumes
 

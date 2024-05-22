@@ -17,7 +17,7 @@ class TestDatasetReal(io.Dataset):
         pass
 
     @property
-    def tile_volumes_tczyx(self) -> dict[int, io.LazyArray]:
+    def tile_volumes_tczyx(self) -> dict[int, io.InputArray]:
         tile_5 = "tests/real_data/tile_5/2/"
         tile_6 = "tests/real_data/tile_6/2/"
 
