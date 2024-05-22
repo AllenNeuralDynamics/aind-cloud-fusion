@@ -41,9 +41,9 @@ def execute_job(yml_path: str,
     xml_path = str(Path(xml_path))
     s3_path = input_path
     if dataset_type == 'BigStitcherDataset':
-        dataset = io.BigStitcherDataset(xml_path, s3_path)
+        dataset = io.BigStitcherDataset(xml_path, s3_path, datastore=0)   # NOTE: Please select your desired datastore
     elif dataset_type == 'BigStitcherDatasetChannel':
-        dataset = io.BigStitcherDatasetChannel(xml_path, s3_path, channel)
+        dataset = io.BigStitcherDatasetChannel(xml_path, s3_path, channel, datastore=0)  # NOTE: Please select your desired datastore
     DATASET = dataset
 
     # Application Object: OUTPUT_PARAMS
@@ -51,6 +51,7 @@ def execute_job(yml_path: str,
         path=output_s3_path,
         chunksize=(1, 1, 128, 128, 128),    # NOTE: Please select your output chunk size
         resolution_zyx=(1.0, 0.748, 0.748),   # NOTE: Please select your output resolution
+        datastore=0                         # NOTE: Please select your desired datastore
     )
 
     # Application Object: RUNTIME_PARAMS

@@ -24,13 +24,14 @@ def get_tile_overlaps(xml_path: str, s3_path: str):
     # Application Object: DATASET
     xml_path = str(Path(xml_path))
     s3_path = input_path
-    DATASET = io.BigStitcherDataset(xml_path, s3_path)
+    DATASET = io.BigStitcherDataset(xml_path, s3_path, datastore=0)
 
     # Application Object: OUTPUT_PARAMS
     OUTPUT_PARAMS = io.OutputParameters(
         path="",
         chunksize=(1, 1, 128, 128, 128),
         resolution_zyx=DATASET.tile_resolution_zyx,
+        datastore=0
     )
 
     # Application Parameter: POST_REG_TFMS
