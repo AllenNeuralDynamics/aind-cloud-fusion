@@ -388,7 +388,8 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
         bucket_name = self.s3_path[slash_2 + 1:slash_3]
         directory_path = self.s3_path[slash_3 + 1:]
 
-        pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
+        # pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
+        # pattern = r"^[a-zA-Z0-9]+_[Xx]_\d{4}_[Yy]_\d{4}_[Zz]_\d{4}_[Cc][Hh]_\d+\.zarr$"
         for p in self._list_bucket_directory(bucket_name, directory_path):
             if p.endswith('.zgroup'):
                 continue
@@ -403,7 +404,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             # Data loading
             match = None
             channel_num = 0
-            pattern = r'(\d{3})\.zarr$'
+            pattern = r'(\d*)\.zarr.?$'
             match = re.search(pattern, p)
 
             if match:

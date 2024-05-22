@@ -31,7 +31,7 @@ def initialize_fusion(
 
     Returns
     -------
-    tile_arrays: Dictionary of lazy tile arrays
+    tile_arrays: Dictionary of input tile arrays
     tile_transforms: Dictionary of (list of) registrations associated with each tile
     tile_sizes: Dictionary of tile sizes
     tile_aabbs: Dictionary of AABB of each transformed tile
@@ -39,7 +39,7 @@ def initialize_fusion(
     output_volume_origin: Location of output volume
     """
 
-    tile_arrays: dict[int, io.LazyArray] = dataset.tile_volumes_tczyx
+    tile_arrays: dict[int, io.InputArray] = dataset.tile_volumes_tczyx
 
     tile_transforms: dict[
         int, list[geometry.Transform]
@@ -536,7 +536,7 @@ def color_cell(
 
     Inputs
     -------
-    tile_arrays: Dictionary of lazy tile arrays
+    tile_arrays: Dictionary of input tile arrays
     tile_transforms: Dictionary of (list of) registrations associated with each tile
     tile_sizes_zyx: Dictionary of tile sizes
     tile_aabbs_zyx: Dictionary of AABB of each transformed tile
