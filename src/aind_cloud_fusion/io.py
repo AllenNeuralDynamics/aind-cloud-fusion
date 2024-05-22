@@ -140,8 +140,15 @@ class BigStitcherDataset(Dataset):
             f"Level {level} is not in {allowed_levels}"
         self.level = level
 
+        self.tile_cache: dict[int, InputArray] = {}
+        self.transform_cache: dict[int, list[geometry.Transform]] = {}
+
     @property
     def tile_volumes_tczyx(self) -> dict[int, InputArray]:
+        if len(self.tile_cache) != 0:
+            return self.tile_cache
+
+        # Otherwise, fetch for first time
         tile_paths = self._extract_tile_paths(self.xml_path)
         for t_id, t_path in tile_paths.items():
             if not self.s3_path.endswith('/'):
@@ -171,10 +178,16 @@ class BigStitcherDataset(Dataset):
             print(f'Loading Tile {tile_id} / {len(tile_paths)}')
             tile_arrays[int(tile_id)] = arr
 
+        self.tile_cache = tile_arrays
+
         return tile_arrays
 
     @property
     def tile_transforms_zyx(self) -> dict[int, list[geometry.Transform]]:
+        if len(self.transform_cache) != 0:
+            return self.transform_cache
+
+        # Otherwise, fetch for first time
         tile_tfms = self._extract_tile_transforms(self.xml_path)
         tile_net_tfms = self._calculate_net_transforms(tile_tfms)
 
@@ -202,6 +215,8 @@ class BigStitcherDataset(Dataset):
             matrix_stack.insert(0, up)
             matrix_stack.append(down)
             tile_net_tfms[int(tile_id)] = matrix_stack
+
+        self.transform_cache = tile_net_tfms
 
         return tile_net_tfms
 
@@ -363,11 +378,18 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
         super().__init__(xml_path, s3_path, datastore)
         self.channel_num = channel_num
 
+        self.tile_cache: dict[int, InputArray] = {}
+
     @property
     def tile_volumes_tczyx(self) -> dict[int, InputArray]:
         """
         Load in channel-specific tiles.
         """
+
+        if len(self.tile_cache) != 0:
+            return self.tile_cache
+
+        # Otherwise fetch for first time
         tile_arrays: dict[int, InputArray] = {}
 
         with open(self.xml_path, "r") as file:
@@ -383,59 +405,50 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             tile_id_lut[location] = int(tile_id)
 
         # Reference path: s3://aind-open-data/HCR_677594_2023-10-20_15-10-36/SPIM.ome.zarr/
+        # Reference tilename: <tile_name, no underscores>_X_####_Y_####_Z_####_ch_###.zarr
         slash_2 = self.s3_path.find('/', self.s3_path.find('/') + 1)
         slash_3 = self.s3_path.find('/', self.s3_path.find('/', self.s3_path.find('/') + 1) + 1)
         bucket_name = self.s3_path[slash_2 + 1:slash_3]
         directory_path = self.s3_path[slash_3 + 1:]
 
-        # pattern = r'^[^_]+\.W\d+(_X_\d{4}_Y_\d{4}_Z_\d{4}_ch_\d+)\.zarr$'
-        # pattern = r"^[a-zA-Z0-9]+_[Xx]_\d{4}_[Yy]_\d{4}_[Zz]_\d{4}_[Cc][Hh]_\d+\.zarr$"
         for p in self._list_bucket_directory(bucket_name, directory_path):
             if p.endswith('.zgroup'):
                 continue
 
-            # Validation
-            # result = re.match(pattern, p)
-            # assert result, \
-            #     f"""Data directory {p} does not follow file convention:
-            #     <tile_name, no underscores>_X_####_Y_####_Z_####_ch_###.zarr
-            #     """
-
             # Data loading
-            match = None
-            channel_num = 0
-            pattern = r'(\d*)\.zarr.?$'
-            match = re.search(pattern, p)
+            channel_num = -1
+            search_result = re.search(r'(\d*)\.zarr.?$', p)
+            if search_result:
+                channel_num = int(search_result.group(1))
+                if channel_num == self.channel_num:
 
-            if match:
-                channel_num = int(match.group(1))
+                    full_resolution_p = self.s3_path + p + '/0'
+                    s_parts = p.split('_')
+                    location = (int(s_parts[2]),
+                                int(s_parts[4]),
+                                int(s_parts[6]))
+                    tile_id = tile_id_lut[location]
 
-            if channel_num == self.channel_num:
-                full_resolution_p = self.s3_path + p + '/0'
-                s_parts = p.split('_')
-                location = (int(s_parts[2]),
-                            int(s_parts[4]),
-                            int(s_parts[6]))
-                tile_id = tile_id_lut[location]
+                    arr = None
+                    if self.datastore == 0:  # Dask
+                        tile_zarr = da.from_zarr(full_resolution_p)
+                        arr = InputDask(tile_zarr)
 
-                arr = None
-                if self.datastore == 0:  # Dask
-                    tile_zarr = da.from_zarr(full_resolution_p)
-                    arr = InputDask(tile_zarr)
+                    elif self.datastore == 1:  # Tensorstore
+                        # Referencing the following naming convention:
+                        # s3://BUCKET_NAME/DATASET_NAME/TILE/NAME/CHANNEL
+                        parts = full_resolution_p.split('/')
+                        bucket = parts[2]
+                        third_slash_index = len(parts[0]) + len(parts[1]) + len(parts[2]) + 3
+                        obj = full_resolution_p[third_slash_index:]
 
-                elif self.datastore == 1:  # Tensorstore
-                    # Referencing the following naming convention:
-                    # s3://BUCKET_NAME/DATASET_NAME/TILE/NAME/CHANNEL
-                    parts = full_resolution_p.split('/')
-                    bucket = parts[2]
-                    third_slash_index = len(parts[0]) + len(parts[1]) + len(parts[2]) + 3
-                    obj = full_resolution_p[third_slash_index:]
+                        tile_zarr = open_zarr_s3(bucket, obj)
+                        arr = InputTensorstore(tile_zarr)
 
-                    tile_zarr = open_zarr_s3(bucket, obj)
-                    arr = InputTensorstore(tile_zarr)
+                    print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
+                    tile_arrays[int(tile_id)] = arr
 
-                print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
-                tile_arrays[int(tile_id)] = arr
+        self.tile_cache = tile_arrays
 
         return tile_arrays
 
