@@ -152,8 +152,8 @@ def initialize_fusion(
         OUTPUT_VOLUME_ORIGIN,
     )
 
-# (DEPRECIATED)
-def initialize_output_volume(
+
+def initialize_output_volume_dask(
     output_params: io.OutputParameters,
     output_volume_size: tuple[int, int, int],
 ) -> zarr.core.Array:
@@ -264,6 +264,21 @@ def initialize_output_volume_tensorstore(
     }).result()
 
 
+def initialize_output_volume(
+    output_params: io.OutputParameters,
+    output_volume_size: tuple[int, int, int],
+) -> io.OutputArray:
+    output = None
+    
+    assert output_params.datastore in [0, 1], \
+        f"Only 0 = Dask and 1 = Tensorstore supported."
+    if output_params.datastore == 0:
+        output = initialize_output_volume_dask(output_params, output_volume_size)
+    elif output_params.datastore == 1:
+        output = initialize_output_volume_tensorstore(output_params, output_volume_size)
+    return output
+
+
 def get_cell_count_zyx(
     output_volume_size: tuple[int, int, int], cell_size: tuple[int, int, int]
 ) -> tuple[int, int, int]:
@@ -307,9 +322,7 @@ def run_fusion(
     output_volume_size = e
     output_volume_origin = f  # Temp variables to meet line character maximum.
 
-    # Replacing with a tensorstore volume:
-    # output_volume = initialize_output_volume(output_params, output_volume_size)
-    output_volume = initialize_output_volume_tensorstore(output_params, output_volume_size)
+    output_volume = initialize_output_volume(output_params, output_volume_size)
 
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
@@ -504,11 +517,11 @@ def run_fusion(
 
 
 def color_cell(
-    tile_arrays: dict[int, io.LazyArray],
+    tile_arrays: dict[int, io.InputArray],
     tile_transforms: dict[int, list[geometry.Transform]],
     tile_sizes_zyx: dict[int, tuple[int, int, int]],
     tile_aabbs: dict[int, geometry.AABB],
-    output_volume: zarr.core.Array,
+    output_volume: io.OutputArray,
     output_volume_origin: tuple[float, float, float],
     cell_size: tuple[int, int, int],
     blend_module: blend.BlendingModule,
@@ -734,10 +747,7 @@ def color_cell(
     )
     # Convert from float32 -> canonical uint16
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
-
-    # Replacing this with a tensorstore write
-    # output_volume[output_slice] = output_chunk
-    output_volume[output_slice].write(output_chunk).result()
+    output_volume[output_slice] = output_chunk
 
     del fused_cell
     del output_chunk

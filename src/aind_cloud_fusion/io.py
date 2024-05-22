@@ -40,21 +40,20 @@ def open_zarr_s3(bucket: str, path: str) -> ts.TensorStore:
     }).result()
 
 
-class LazyArray:
+class InputArray:
     def __getitem__(self, value):
         """
         Member function for slice syntax, ex: arr[0:10, 0:10]
         Value is a Python slice object.
         """
-        raise NotImplementedError("Please implement in LazyArray subclass.")
+        raise NotImplementedError("Please implement in InputArray subclass.")
 
     @property
     def shape(self):
-        raise NotImplementedError("Please implement in LazyArray subclass.")
+        raise NotImplementedError("Please implement in InputArray subclass.")
 
 
-# (DEPRECIATED)
-class ZarrArray(LazyArray):
+class InputDask(InputArray):
     def __init__(self, arr: da.Array):
         self.arr = arr
 
@@ -66,7 +65,7 @@ class ZarrArray(LazyArray):
         return self.arr.shape
 
 
-class ZarrArray(LazyArray):
+class InputTensorstore(InputArray):
     def __init__(self, arr: ts.TensorStore):
         self.arr = arr
 
@@ -88,7 +87,7 @@ class Dataset:
         pass
 
     @property
-    def tile_volumes_tczyx(self) -> dict[int, LazyArray]:
+    def tile_volumes_tczyx(self) -> dict[int, InputArray]:
         """
         Dict of tile_id -> tile references.
         """
@@ -128,9 +127,13 @@ class BigStitcherDataset(Dataset):
     Intended for the base registration channel.
     """
 
-    def __init__(self, xml_path: str, s3_path: str, level: int = 0):
+    def __init__(self, xml_path: str, s3_path: str, datastore: int, level: int = 0):
         self.xml_path = xml_path
         self.s3_path = s3_path
+
+        assert datastore in [0, 1], \
+            f"Only 0 = Dask and 1 = Tensorstore supported."
+        self.datastore = datastore  # {0 = Dask, 1 = Tensorstore}
 
         allowed_levels = [0, 1, 2, 3, 4, 5]
         assert level in allowed_levels, \
@@ -138,7 +141,7 @@ class BigStitcherDataset(Dataset):
         self.level = level
 
     @property
-    def tile_volumes_tczyx(self) -> dict[int, LazyArray]:
+    def tile_volumes_tczyx(self) -> dict[int, InputArray]:
         tile_paths = self._extract_tile_paths(self.xml_path)
         for t_id, t_path in tile_paths.items():
             if not self.s3_path.endswith('/'):
@@ -147,20 +150,26 @@ class BigStitcherDataset(Dataset):
             level_str = '/' + str(self.level)  # Ex: '/0'
             tile_paths[t_id] = self.s3_path + Path(t_path).name + level_str
 
-        tile_arrays: dict[int, LazyArray] = {}
+        tile_arrays: dict[int, InputArray] = {}
         for tile_id, t_path in tile_paths.items():
+            
+            arr = None
+            if self.datastore == 0:  # Dask
+                tile_zarr = da.from_zarr(t_path)
+                arr = InputDask(tile_zarr)
+            elif self.datastore == 1:  # Tensorstore
+                # Referencing the following naming convention:
+                # s3://BUCKET_NAME/DATASET_NAME/TILE/NAME/CHANNEL
+                parts = t_path.split('/')
+                bucket = parts[2]
+                third_slash_index = len(parts[0]) + len(parts[1]) + len(parts[2]) + 3
+                obj = t_path[third_slash_index:]
 
-            # Referencing the following naming convention:
-            # s3://BUCKET_NAME/DATASET_NAME/TILE/NAME/CHANNEL
-            parts = t_path.split('/')
-            bucket = parts[2]
-            third_slash_index = len(parts[0]) + len(parts[1]) + len(parts[2]) + 3
-            obj = t_path[third_slash_index:]
-
-            tile_zarr = open_zarr_s3(bucket, obj)
-
+                tile_zarr = open_zarr_s3(bucket, obj)
+                arr = InputTensorstore(tile_zarr)
+            
             print(f'Loading Tile {tile_id} / {len(tile_paths)}')
-            tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
+            tile_arrays[int(tile_id)] = arr
 
         return tile_arrays
 
@@ -347,19 +356,19 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
     NOTE: Only loads full resolution images/registrations.
     """
 
-    def __init__(self, xml_path: str, s3_path: str, channel_num: int):
+    def __init__(self, xml_path: str, s3_path: str, channel_num: int, datastore: int):
         """
         Only new information required is channel number.
         """
-        super().__init__(xml_path, s3_path)
+        super().__init__(xml_path, s3_path, datastore)
         self.channel_num = channel_num
 
     @property
-    def tile_volumes_tczyx(self) -> dict[int, LazyArray]:
+    def tile_volumes_tczyx(self) -> dict[int, InputArray]:
         """
         Load in channel-specific tiles.
         """
-        tile_arrays: dict[int, LazyArray] = {}
+        tile_arrays: dict[int, InputArray] = {}
 
         with open(self.xml_path, "r") as file:
             data: OrderedDict = xmltodict.parse(file.read())
@@ -402,24 +411,30 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
             if channel_num == self.channel_num:
                 full_resolution_p = self.s3_path + p + '/0'
-
-                # Referencing the following naming convention:
-                # s3://BUCKET_NAME/DATASET_NAME/TILE/NAME/CHANNEL
-                parts = full_resolution_p.split('/')
-                bucket = parts[2]
-                third_slash_index = len(parts[0]) + len(parts[1]) + len(parts[2]) + 3
-                obj = full_resolution_p[third_slash_index:]
-
-                tile_zarr = open_zarr_s3(bucket, obj)
                 s_parts = p.split('_')
                 location = (int(s_parts[2]),
                             int(s_parts[4]),
                             int(s_parts[6]))
                 tile_id = tile_id_lut[location]
 
-                print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
-                tile_arrays[int(tile_id)] = ZarrArray(tile_zarr)
+                arr = None
+                if self.datastore == 0:  # Dask
+                    tile_zarr = da.from_zarr(full_resolution_p)
+                    arr = InputDask(tile_zarr)
 
+                elif self.datastore == 1:  # Tensorstore
+                    # Referencing the following naming convention:
+                    # s3://BUCKET_NAME/DATASET_NAME/TILE/NAME/CHANNEL
+                    parts = full_resolution_p.split('/')
+                    bucket = parts[2]
+                    third_slash_index = len(parts[0]) + len(parts[1]) + len(parts[2]) + 3
+                    obj = full_resolution_p[third_slash_index:]
+
+                    tile_zarr = open_zarr_s3(bucket, obj)
+                    arr = InputTensorstore(tile_zarr)
+
+                print(f'Loading Tile {tile_id} / {len(tile_id_lut)}')
+                tile_arrays[int(tile_id)] = arr
 
         return tile_arrays
 
@@ -445,14 +460,37 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
         return files
 
 
+class OutputArray:
+    def __setitem__(self, index, value):
+        raise NotImplementedError("Please implement in InputArray subclass.")
+    
+
+class OutputDask(OutputArray): 
+    def __init__(self, arr: da.Array):
+        self.arr = arr
+
+    def __setitem__(self, index, value):
+        self.arr[index] = value
+
+
+class OutputTensorstore(OutputArray):
+    def __init__(self, arr: ts.TensorStore):
+        self.arr = arr
+
+    def __setitem__(self, index, value):
+        self.arr[index].write(value).result()
+
+
 @dataclass
 class OutputParameters:
     path: str
     chunksize: tuple[int, int, int, int, int]
     resolution_zyx: tuple[float, float, float]
+    datastore: int  # {0 == Dask, 1 == Tensorstore}
     dtype: np.dtype = np.uint16
     dimension_separator: str = "/"
     compressor = Blosc(cname='zstd', clevel=1, shuffle=Blosc.SHUFFLE)
+
 
 @dataclass
 class RuntimeParameters:
