@@ -1,6 +1,7 @@
 """
 Algorithm geometry primitives and utilities.
 """
+
 import numpy as np
 import torch
 from nptyping import NDArray, Shape

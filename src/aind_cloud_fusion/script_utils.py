@@ -2,18 +2,22 @@
 Utilities for scripts.
 """
 
-import boto3
 import re
+
+import boto3
 import yaml
+
 
 def read_config_yaml(yaml_path: str) -> dict:
     with open(yaml_path, "r") as f:
         yaml_dict = yaml.safe_load(f)
     return yaml_dict
 
+
 def write_config_yaml(yaml_path: str, yaml_data: dict) -> None:
     with open(yaml_path, "w") as file:
         yaml.dump(yaml_data, file)
+
 
 def list_all_tiles_in_bucket_path(
     bucket_SPIM_folder: str, bucket_name="aind-open-data"
@@ -46,6 +50,7 @@ def list_all_tiles_in_bucket_path(
         tiles.append(o.get("Prefix"))
     return tiles
 
+
 def extract_channel_from_tile_path(t_path: str) -> int:
     """
     Extracts channel from tile path naming convention:
@@ -67,6 +72,7 @@ def extract_channel_from_tile_path(t_path: str) -> int:
     match = re.search(pattern, t_path)
     channel = int(match.group(2))
     return channel
+
 
 def get_unique_channels_for_dataset(dataset_path: str) -> list:
     """

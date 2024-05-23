@@ -1,15 +1,17 @@
 """Core fusion algorithm."""
-import os
+
 import logging
+import os
 import time
 
 import dask
 import dask.array as da
-from dask.distributed import Client, LocalCluster
 import numpy as np
-import torch
 import s3fs
+import tensorstore as ts
+import torch
 import zarr
+from dask.distributed import Client, LocalCluster
 
 import aind_cloud_fusion.blend as blend
 import aind_cloud_fusion.geometry as geometry
@@ -30,7 +32,7 @@ def initialize_fusion(
 
     Returns
     -------
-    tile_arrays: Dictionary of lazy tile arrays
+    tile_arrays: Dictionary of input tile arrays
     tile_transforms: Dictionary of (list of) registrations associated with each tile
     tile_sizes: Dictionary of tile sizes
     tile_aabbs: Dictionary of AABB of each transformed tile
@@ -38,22 +40,22 @@ def initialize_fusion(
     output_volume_origin: Location of output volume
     """
 
-    tile_arrays: dict[int, io.LazyArray] = dataset.tile_volumes_tczyx
+    tile_arrays: dict[int, io.InputArray] = dataset.tile_volumes_tczyx
 
-    tile_transforms: dict[
-        int, list[geometry.Transform]
-    ] = dataset.tile_transforms_zyx
-    input_resolution_zyx: tuple[
-        float, float, float
-    ] = dataset.tile_resolution_zyx
+    tile_transforms: dict[int, list[geometry.Transform]] = (
+        dataset.tile_transforms_zyx
+    )
+    input_resolution_zyx: tuple[float, float, float] = (
+        dataset.tile_resolution_zyx
+    )
     iz, iy, ix = input_resolution_zyx
     scale_input_zyx = geometry.Affine(
         np.array([[iz, 0, 0, 0], [0, iy, 0, 0], [0, 0, ix, 0]])
     )
 
-    output_resolution_zyx: tuple[
-        float, float, float
-    ] = output_params.resolution_zyx
+    output_resolution_zyx: tuple[float, float, float] = (
+        output_params.resolution_zyx
+    )
     oz, oy, ox = output_resolution_zyx
     sample_output_zyx = geometry.Affine(
         np.array([[1 / oz, 0, 0, 0], [0, 1 / oy, 0, 0], [0, 0, 1 / ox, 0]])
@@ -152,7 +154,7 @@ def initialize_fusion(
     )
 
 
-def initialize_output_volume(
+def initialize_output_volume_dask(
     output_params: io.OutputParameters,
     output_volume_size: tuple[int, int, int],
 ) -> zarr.core.Array:
@@ -173,22 +175,24 @@ def initialize_output_volume(
     out_group = zarr.open_group(output_params.path, mode="w")
 
     # Cloud execuion
-    if output_params.path.startswith('s3'):
+    if output_params.path.startswith("s3"):
         s3 = s3fs.S3FileSystem(
             config_kwargs={
-                'max_pool_connections': 50,
-                's3': {
-                'multipart_threshold': 64 * 1024 * 1024,  # 64 MB, avoid multipart upload for small chunks
-                'max_concurrent_requests': 20  # Increased from 10 -> 20.
+                "max_pool_connections": 50,
+                "s3": {
+                    "multipart_threshold": 64
+                    * 1024
+                    * 1024,  # 64 MB, avoid multipart upload for small chunks
+                    "max_concurrent_requests": 20,  # Increased from 10 -> 20.
                 },
-                'retries': {
-                'total_max_attempts': 100,
-                'mode': 'adaptive',
-                }
+                "retries": {
+                    "total_max_attempts": 100,
+                    "mode": "adaptive",
+                },
             }
         )
         store = s3fs.S3Map(root=output_params.path, s3=s3)
-        out_group = zarr.open(store=store, mode='a')
+        out_group = zarr.open(store=store, mode="a")
 
     path = "0"
     chunksize = output_params.chunksize
@@ -215,6 +219,79 @@ def initialize_output_volume(
     return output_volume
 
 
+def initialize_output_volume_tensorstore(
+    output_params: io.OutputParameters,
+    output_volume_size: tuple[int, int, int],
+):
+    """
+    The output is an async Tensorstore obj that you need
+    to call .result() to perform a write.
+    """
+    parts = output_params.path.split("/")
+    bucket = parts[2]
+    path = "/".join(parts[3:])
+    chunksize = list(output_params.chunksize)
+    output_shape = [
+        1,
+        1,
+        output_volume_size[0],
+        output_volume_size[1],
+        output_volume_size[2],
+    ]
+
+    return ts.open(
+        {
+            "driver": "zarr",
+            "dtype": "uint16",
+            "kvstore": {
+                "driver": "s3",
+                "bucket": bucket,
+                "path": path,
+            },
+            "create": True,
+            "open": True,
+            "metadata": {
+                "chunks": chunksize,
+                "compressor": {
+                    "blocksize": 0,
+                    "clevel": 1,
+                    "cname": "zstd",
+                    "id": "blosc",
+                    "shuffle": 1,
+                },
+                "dimension_separator": "/",
+                "dtype": "<u2",
+                "fill_value": 0,
+                "filters": None,
+                "order": "C",
+                "shape": output_shape,
+                "zarr_format": 2,
+            },
+        }
+    ).result()
+
+
+def initialize_output_volume(
+    output_params: io.OutputParameters,
+    output_volume_size: tuple[int, int, int],
+) -> io.OutputArray:
+
+    output = None
+    assert output_params.datastore in [
+        0,
+        1,
+    ], "Only 0 = Dask and 1 = Tensorstore supported."
+    if output_params.datastore == 0:
+        output = initialize_output_volume_dask(
+            output_params, output_volume_size
+        )
+    elif output_params.datastore == 1:
+        output = initialize_output_volume_tensorstore(
+            output_params, output_volume_size
+        )
+    return output
+
+
 def get_cell_count_zyx(
     output_volume_size: tuple[int, int, int], cell_size: tuple[int, int, int]
 ) -> tuple[int, int, int]:
@@ -229,7 +306,7 @@ def get_cell_count_zyx(
     return z_cnt, y_cnt, x_cnt
 
 
-def run_fusion(
+def run_fusion(  # noqa: C901
     # client,    # Uncomment for testing in jupyterlab
     dataset: io.Dataset,
     output_params: io.OutputParameters,
@@ -257,7 +334,9 @@ def run_fusion(
     tile_aabbs = d
     output_volume_size = e
     output_volume_origin = f  # Temp variables to meet line character maximum.
+
     output_volume = initialize_output_volume(output_params, output_volume_size)
+
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
 
@@ -274,19 +353,20 @@ def run_fusion(
         for p_args in process_args:
             LOGGER.info(f'Starting Cell {p_args["cell_num"]}/{num_cells}')
             start_time = time.time()
-            color_cell(tile_arrays,
-                    tile_transforms,
-                    tile_sizes_zyx,
-                    tile_aabbs,
-                    output_volume,
-                    output_volume_origin,
-                    cell_size,
-                    blend_module,
-                    p_args["z"],
-                    p_args["y"],
-                    p_args["x"],
-                    torch.device('cpu'),
-                    LOGGER,
+            color_cell(
+                tile_arrays,
+                tile_transforms,
+                tile_sizes_zyx,
+                tile_aabbs,
+                output_volume,
+                output_volume_origin,
+                cell_size,
+                blend_module,
+                p_args["z"],
+                p_args["y"],
+                p_args["x"],
+                torch.device("cpu"),
+                LOGGER,
             )
             LOGGER.info(
                 f"Finished Cell {p_args['cell_num']}/{num_cells}: {time.time() - start_time}"
@@ -309,9 +389,9 @@ def run_fusion(
         # Run Fusion: Fill work queue (active processes) with inital tasks
         # Task-specific info includes process_args and device.
         start_run = time.time()
-        active_processes: list[
-            tuple
-        ] = []  # (process, device, cell_num, start_time)
+        active_processes: list[tuple] = (
+            []
+        )  # (process, device, cell_num, start_time)
         for i in range(runtime_params.pool_size):
             p_args = process_args.pop(0)
             p = torch.multiprocessing.Process(
@@ -328,14 +408,14 @@ def run_fusion(
                     p_args["z"],
                     p_args["y"],
                     p_args["x"],
-                    torch.device('cpu'),
+                    torch.device("cpu"),
                     LOGGER,
                 ),
             )
             active_processes.append(
                 (
                     p,
-                    torch.device('cpu'),
+                    torch.device("cpu"),
                     p_args["cell_num"],
                     time.time(),
                 )
@@ -398,14 +478,19 @@ def run_fusion(
         start_run = time.time()
 
         batch_start = start_run
-        client = Client(LocalCluster(n_workers=runtime_params.pool_size, threads_per_worker=1, processes=True))
-
+        client = Client(  # noqa: F841
+            LocalCluster(
+                n_workers=runtime_params.pool_size,
+                threads_per_worker=1,
+                processes=True,
+            )
+        )
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
         num_cells = len(runtime_params.worker_cells)
-        batch_size = 1000   # Good batch size for 128^3.
-        LOGGER.info(f'Coloring {num_cells} cells')
-        LOGGER.info(f'Batch Size: {batch_size}')
+        batch_size = 1000  # Good batch size for 128^3.
+        LOGGER.info(f"Coloring {num_cells} cells")
+        LOGGER.info(f"Batch Size: {batch_size}")
 
         delayed_color_cells = []
         for cell_num, cell in enumerate(runtime_params.worker_cells):
@@ -424,38 +509,40 @@ def run_fusion(
                     y,
                     x,
                     torch.device("cpu"),  # Hardcoding CPU cluster
-                    LOGGER
+                    LOGGER,
                 )
             )
             # Batching
             if len(delayed_color_cells) == batch_size:
-                LOGGER.info(f'Calculating up to {cell_num}/{num_cells}...')
+                LOGGER.info(f"Calculating up to {cell_num}/{num_cells}...")
                 da.compute(*delayed_color_cells)
 
                 # Clear memory for runtime stability
                 delayed_color_cells = []
-                # client.restart()
-                # ^ Remove restart command, dask bug
 
-                LOGGER.info(f'Finished up to {cell_num}/{num_cells}. Batch time: {time.time() - batch_start}')
+                LOGGER.info(
+                    f"Finished up to {cell_num}/{num_cells}. Batch time: {time.time() - batch_start}"
+                )
                 batch_start = time.time()
 
         # Compute remaining cells
-        LOGGER.info(f'Calculating up to {num_cells}/{num_cells}...')
+        LOGGER.info(f"Calculating up to {num_cells}/{num_cells}...")
         da.compute(*delayed_color_cells)
         delayed_color_cells = []
-        LOGGER.info(f'Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}')
+        LOGGER.info(
+            f"Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}"
+        )
         batch_start = time.time()
 
         LOGGER.info(f"Runtime: {time.time() - start_run}")
 
 
 def color_cell(
-    tile_arrays: dict[int, io.LazyArray],
+    tile_arrays: dict[int, io.InputArray],
     tile_transforms: dict[int, list[geometry.Transform]],
     tile_sizes_zyx: dict[int, tuple[int, int, int]],
     tile_aabbs: dict[int, geometry.AABB],
-    output_volume: zarr.core.Array,
+    output_volume: io.OutputArray,
     output_volume_origin: tuple[float, float, float],
     cell_size: tuple[int, int, int],
     blend_module: blend.BlendingModule,
@@ -463,14 +550,14 @@ def color_cell(
     y: int,
     x: int,
     device: torch.device,
-    logger: logging.Logger  # Depreciated
+    logger: logging.Logger,  # Depreciated
 ):
     """
     Parallelized function called in fusion.
 
     Inputs
     -------
-    tile_arrays: Dictionary of lazy tile arrays
+    tile_arrays: Dictionary of input tile arrays
     tile_transforms: Dictionary of (list of) registrations associated with each tile
     tile_sizes_zyx: Dictionary of tile sizes
     tile_aabbs_zyx: Dictionary of AABB of each transformed tile
@@ -648,7 +735,11 @@ def color_cell(
 
         # Interpolate and Store
         tile_contribution = torch.nn.functional.grid_sample(
-            image_crop, tile_coords, padding_mode="zeros", mode="nearest", align_corners=False
+            image_crop,
+            tile_coords,
+            padding_mode="zeros",
+            mode="nearest",
+            align_corners=False,
         )
 
         cell_contributions.append(tile_contribution)
@@ -657,17 +748,23 @@ def color_cell(
         del tile_coords
 
     # Fuse all cell contributions together with specified blend module
-    fused_cell = torch.zeros((1,
-                              1,
-                              cell_box[1] - cell_box[0],
-                              cell_box[3] - cell_box[2],
-                              cell_box[5] - cell_box[4]))
+    fused_cell = torch.zeros(
+        (
+            1,
+            1,
+            cell_box[1] - cell_box[0],
+            cell_box[3] - cell_box[2],
+            cell_box[5] - cell_box[4],
+        )
+    )
     if len(cell_contributions) != 0:
         fused_cell = blend_module.blend(
             cell_contributions,
             device,
-            kwargs={'chunk_tile_ids': cell_contribution_tile_ids,
-                    'cell_box': cell_box}
+            kwargs={
+                "chunk_tile_ids": cell_contribution_tile_ids,
+                "cell_box": cell_box,
+            },
         )
         cell_contributions = []
 
