@@ -2,12 +2,11 @@
 Interface for generic blending.
 """
 
-import dask.array as da
+from collections import defaultdict
+
 import numpy as np
 import torch
 import xmltodict
-
-from collections import defaultdict
 
 import aind_cloud_fusion.geometry as geometry
 
@@ -18,10 +17,8 @@ class BlendingModule:
     Subclass can define arbitrary constructors/attributes/members as necessary.
     """
 
-    def blend(self,
-              chunks: list[torch.Tensor],
-              device: torch.device,
-              kwargs = {}
+    def blend(
+        self, chunks: list[torch.Tensor], device: torch.device, kwargs={}
     ) -> torch.Tensor:
         """
         chunks:
@@ -40,10 +37,8 @@ class MaxProjection(BlendingModule):
     Simplest blending implementation possible. No constructor needed.
     """
 
-    def blend(self,
-              chunks: list[torch.Tensor],
-              device: torch.device,
-              kwargs = {}
+    def blend(
+        self, chunks: list[torch.Tensor], device: torch.device, kwargs={}
     ) -> torch.Tensor:
         """
         Parameters
@@ -63,10 +58,9 @@ class MaxProjection(BlendingModule):
         return fused_chunk
 
 
-def get_overlap_regions(tile_layout: list[list[int]],
-                        tile_aabbs: dict[int, geometry.AABB]
-                        ) -> tuple[dict[int, list[int]],
-                                   dict[int, geometry.AABB]]:
+def get_overlap_regions(
+    tile_layout: list[list[int]], tile_aabbs: dict[int, geometry.AABB]
+) -> tuple[dict[int, list[int]], dict[int, geometry.AABB]]:
     """
     Input:
     tile_layout: array of tile ids arranged corresponding to stage coordinates
@@ -80,27 +74,29 @@ def get_overlap_regions(tile_layout: list[list[int]],
     tile_id -> overlap_id -> overlaps
     """
 
-    def _get_overlap_aabb(aabb_1: geometry.AABB,
-                          aabb_2: geometry.AABB):
+    def _get_overlap_aabb(aabb_1: geometry.AABB, aabb_2: geometry.AABB):
         """
         Utility for finding overlapping regions between tiles and chunks.
         """
 
         # Check AABB's are colliding, meaning they colllide in all 3 axes
-        assert (aabb_1[1] > aabb_2[0] and aabb_1[0] < aabb_2[1]) and \
-               (aabb_1[3] > aabb_2[2] and aabb_1[2] < aabb_2[3]) and \
-               (aabb_1[5] > aabb_2[4] and aabb_1[4] < aabb_2[5]), \
-               f'Input AABBs are not colliding: {aabb_1=}, {aabb_2=}'
+        assert (
+            (aabb_1[1] > aabb_2[0] and aabb_1[0] < aabb_2[1])
+            and (aabb_1[3] > aabb_2[2] and aabb_1[2] < aabb_2[3])
+            and (aabb_1[5] > aabb_2[4] and aabb_1[4] < aabb_2[5])
+        ), f"Input AABBs are not colliding: {aabb_1=}, {aabb_2=}"
 
         # Between two colliding intervals A and B,
         # the overlap interval is the maximum of (A_min, B_min)
         # and the minimum of (A_max, B_max).
-        overlap_aabb = (np.max([aabb_1[0], aabb_2[0]]),
-                        np.min([aabb_1[1], aabb_2[1]]),
-                        np.max([aabb_1[2], aabb_2[2]]),
-                        np.min([aabb_1[3], aabb_2[3]]),
-                        np.max([aabb_1[4], aabb_2[4]]),
-                        np.min([aabb_1[5], aabb_2[5]]))
+        overlap_aabb = (
+            np.max([aabb_1[0], aabb_2[0]]),
+            np.min([aabb_1[1], aabb_2[1]]),
+            np.max([aabb_1[2], aabb_2[2]]),
+            np.min([aabb_1[3], aabb_2[3]]),
+            np.max([aabb_1[4], aabb_2[4]]),
+            np.min([aabb_1[5], aabb_2[5]]),
+        )
 
         return overlap_aabb
 
@@ -112,18 +108,30 @@ def get_overlap_regions(tile_layout: list[list[int]],
     edges: list[tuple[int, int]] = []
     x_length = len(tile_layout)
     y_length = len(tile_layout[0])
-    directions = [(-1, -1), (-1, 0), (-1, 1),
-                    (0, -1),         (0, 1),
-                    (1, -1), (1, 0), (1, 1)]
+    directions = [
+        (-1, -1),
+        (-1, 0),
+        (-1, 1),
+        (0, -1),
+        (0, 1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+    ]
     for x in range(x_length):
         for y in range(y_length):
-            for (dx, dy) in directions:
+            for dx, dy in directions:
                 nx = x + dx
                 ny = y + dy
-                if (0 <= nx and nx < x_length and
-                    0 <= ny and ny < y_length and   # Boundary conditions
-                    tile_layout[x][y] != -1 and
-                    tile_layout[nx][ny] != -1):  # Spacer conditions
+                # Boundary conditions and spacer conditions
+                if (
+                    0 <= nx
+                    and nx < x_length
+                    and 0 <= ny
+                    and ny < y_length
+                    and tile_layout[x][y] != -1
+                    and tile_layout[nx][ny] != -1
+                ):
 
                     id_1 = tile_layout[x][y]
                     id_2 = tile_layout[nx][ny]
@@ -133,7 +141,7 @@ def get_overlap_regions(tile_layout: list[list[int]],
 
     # 2) Find overlap regions
     overlap_id = 0
-    for (id_1, id_2) in edges:
+    for id_1, id_2 in edges:
         aabb_1 = tile_aabbs[id_1]
         aabb_2 = tile_aabbs[id_2]
 
@@ -153,25 +161,24 @@ def get_overlap_regions(tile_layout: list[list[int]],
 class WeightedLinearBlending(BlendingModule):
     """
     Linear Blending with distance-based weights.
-    NOTE: Only supports translation-only registration on square tiles. 
+    NOTE: Only supports translation-only registration on square tiles.
     To modify for affine registration:
     - Forward transform overlap weights into output volume.
     - Inverse transform for local weights.
     """
 
-    def __init__(self,
-                 tile_aabbs: dict[int, geometry.AABB],
-                 ) -> None:
+    def __init__(
+        self,
+        tile_aabbs: dict[int, geometry.AABB],
+    ) -> None:
         super().__init__()
         """
         tile_aabbs: dict of tile_id -> AABB, defined in fusion initalization.
         """
         self.tile_aabbs = tile_aabbs
 
-    def blend(self,
-              chunks: list[torch.Tensor],
-              device: torch.device,
-              kwargs = {}
+    def blend(
+        self, chunks: list[torch.Tensor], device: torch.device, kwargs={}
     ) -> torch.Tensor:
         """
         Parameters
@@ -194,8 +201,8 @@ class WeightedLinearBlending(BlendingModule):
             return chunks[0]
 
         # For 2+ chunks, within an overlapping region:
-        chunk_tile_ids = kwargs['chunk_tile_ids']
-        cell_box = kwargs['cell_box']
+        chunk_tile_ids = kwargs["chunk_tile_ids"]
+        cell_box = kwargs["cell_box"]
 
         # Calculate local weight masks
         local_weights: list[torch.Tensor] = []
@@ -211,7 +218,10 @@ class WeightedLinearBlending(BlendingModule):
             x_indices = torch.arange(cell_box[4], cell_box[5], step=1) + 0.5
 
             z_grid, y_grid, x_grid = torch.meshgrid(
-                z_indices, y_indices, x_indices, indexing="ij"  # {z_grid, y_grid, x_grid} are 3D Tensors
+                z_indices,
+                y_indices,
+                x_indices,
+                indexing="ij",  # {z_grid, y_grid, x_grid} are 3D Tensors
             )
 
             # Weight formula:
@@ -220,7 +230,9 @@ class WeightedLinearBlending(BlendingModule):
             # representing cells that lie between two tiles.
             # 2) After calculating pyramid weights, confine weights to actual boundary
             # of image, represented by position of non-zero values in chunk.
-            weights = (cx - x_min) - torch.max(torch.abs(x_grid - cx), torch.abs(y_grid - cy))
+            weights = (cx - x_min) - torch.max(
+                torch.abs(x_grid - cx), torch.abs(y_grid - cy)
+            )
             signal_mask = torch.clamp(chunk, 0, 1)
             inbound_weights = weights * signal_mask
 
@@ -234,9 +246,10 @@ class WeightedLinearBlending(BlendingModule):
             w /= total_weight
             w = w.to(device)
             c = c.to(device)
-            fused_chunk += (w * c)
+            fused_chunk += w * c
 
         return fused_chunk
+
 
 def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
     """
@@ -257,10 +270,10 @@ def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
     with open(xml_path, "r") as file:
         data = xmltodict.parse(file.read())
     stage_positions_xyz: dict[int, tuple[float, float, float]] = {}
-    for d in data['SpimData']['ViewRegistrations']['ViewRegistration']:
-        tile_id = d['@setup']
+    for d in data["SpimData"]["ViewRegistrations"]["ViewRegistration"]:
+        tile_id = d["@setup"]
 
-        view_transform = d['ViewTransform']
+        view_transform = d["ViewTransform"]
         if isinstance(view_transform, list):
             view_transform = view_transform[-1]
 

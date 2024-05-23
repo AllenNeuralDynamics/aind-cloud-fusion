@@ -1,9 +1,11 @@
 """Mock Dataset Generation."""
+
 import numpy as np
 from PIL import Image
 
 import aind_cloud_fusion.geometry as geometry
 import aind_cloud_fusion.io as io
+
 
 class TestDataset(io.Dataset):
     """
@@ -88,6 +90,7 @@ def generate_z_max_proj_dataset() -> tuple[np.ndarray, io.Dataset]:
 
     return ground_truth, dataset
 
+
 def generate_y_max_proj_dataset() -> tuple[np.ndarray, io.Dataset]:
     """
     200x200 image stacked to 400 in 3rd dimension.
@@ -126,6 +129,7 @@ def generate_y_max_proj_dataset() -> tuple[np.ndarray, io.Dataset]:
     )
 
     return ground_truth, dataset
+
 
 def generate_x_max_proj_dataset() -> tuple[np.ndarray, io.Dataset]:
     """
@@ -166,24 +170,25 @@ def generate_x_max_proj_dataset() -> tuple[np.ndarray, io.Dataset]:
 
     return ground_truth, dataset
 
+
 def generate_y_lin_blend_dataset() -> tuple[np.ndarray, io.Dataset]:
-    """This dataset is padded such that each tile is a square. """
+    """This dataset is padded such that each tile is a square."""
 
     img = Image.open("tests/nueral_dynamics_logo.jpeg").convert("L")
     img = np.array(img)
     y, x = img.shape
 
     stack_size = 400
-    ground_truth = np.ones((stack_size, y + 100, x)) * 255  # Add padding upfront
+    ground_truth = (
+        np.ones((stack_size, y + 100, x)) * 255
+    )  # Add padding upfront
     for i in range(stack_size):
         ground_truth[i, 50:-50, :] = img
     tile_1_zyx = ground_truth[:, 0:200, :].copy()
     tile_2_zyx = ground_truth[:, 100:300, :].copy()
 
     # Registration matrix is (identity, translation = to tile cut).
-    registration_zyx = np.array(
-        [[1, 0, 0, 0], [0, 1, 0, 100], [0, 0, 1, 0]]
-    ) 
+    registration_zyx = np.array([[1, 0, 0, 0], [0, 1, 0, 100], [0, 0, 1, 0]])
     input_resolution_zyx = (1.0, 1.0, 1.0)
 
     # Reshape from 3D -> 5D
@@ -198,23 +203,23 @@ def generate_y_lin_blend_dataset() -> tuple[np.ndarray, io.Dataset]:
 
 
 def generate_x_lin_blend_dataset() -> tuple[np.ndarray, io.Dataset]:
-    """This dataset is padded such that each tile is a square. """
+    """This dataset is padded such that each tile is a square."""
 
     img = Image.open("tests/nueral_dynamics_logo.jpeg").convert("L")
     img = np.array(img)
     y, x = img.shape
 
     stack_size = 400
-    ground_truth = np.ones((stack_size, y, x + 100)) * 255  # Add padding upfront
+    ground_truth = (
+        np.ones((stack_size, y, x + 100)) * 255
+    )  # Add padding upfront
     for i in range(stack_size):
         ground_truth[i, :, 50:-50] = img
     tile_1_zyx = ground_truth[:, :, 0:200].copy()
     tile_2_zyx = ground_truth[:, :, 100:300].copy()
 
     # Registration matrix is (identity, translation = to tile cut).
-    registration_zyx = np.array(
-        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 100]]
-    ) 
+    registration_zyx = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 100]])
     input_resolution_zyx = (1.0, 1.0, 1.0)
 
     # Reshape from 3D -> 5D

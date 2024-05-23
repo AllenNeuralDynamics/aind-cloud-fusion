@@ -1,20 +1,21 @@
 """Test suite for fusion worker."""
+
+import shutil
 import unittest
 from pathlib import Path
-import shutil
 
 import numpy as np
 import zarr
-
-import aind_cloud_fusion.blend as blend
-import aind_cloud_fusion.fusion as fusion
-import aind_cloud_fusion.io as io
-import aind_cloud_fusion.geometry as geometry
 from test_dataset import (
     generate_x_lin_blend_dataset,
     generate_y_lin_blend_dataset,
 )
 from test_dataset_real import generate_real_dataset
+
+import aind_cloud_fusion.blend as blend
+import aind_cloud_fusion.fusion as fusion
+import aind_cloud_fusion.geometry as geometry
+import aind_cloud_fusion.io as io
 
 
 class TestFusion(unittest.TestCase):
@@ -31,9 +32,7 @@ class TestFusion(unittest.TestCase):
         # Application Object: RUNTIME PARAMS
         # Will define worker_cells at the end
         self.RUNTIME_PARAMS = io.RuntimeParameters(
-            option=0,
-            pool_size=16,
-            worker_cells=[]
+            option=0, pool_size=16, worker_cells=[]
         )
         # ^^^Worker cells initalized later in factory methods
         # following fusion initalization.
@@ -55,20 +54,17 @@ class TestFusion(unittest.TestCase):
 
         return fused_data
 
-
     def test_fusion_in_x_axis(self):
         # Generate Dataset
         ground_truth, DATASET = generate_x_lin_blend_dataset()
 
         # Generate Output Parameters
-        zarr_path = str(
-            Path(self.output_path) / "fused_in_x.zarr"
-        )
+        zarr_path = str(Path(self.output_path) / "fused_in_x.zarr")
         OUTPUT_PARAMS = io.OutputParameters(
             path=zarr_path,
             chunksize=(1, 1, 100, 100, 100),
             resolution_zyx=(1.0, 1.0, 1.0),
-            datastore=0
+            datastore=0,
         )
 
         # Init and Run Fusion
@@ -86,33 +82,34 @@ class TestFusion(unittest.TestCase):
         self.RUNTIME_PARAMS.worker_cells = worker_cells
 
         # Set Blending parameters here
-        self.BLENDING_MODULE = blend.WeightedLinearBlending(tile_aabbs=tile_aabbs)
+        self.BLENDING_MODULE = blend.WeightedLinearBlending(
+            tile_aabbs=tile_aabbs
+        )
 
-        fusion.run_fusion(DATASET,
-                          OUTPUT_PARAMS,
-                          self.RUNTIME_PARAMS,
-                          self.CELL_SIZE,
-                          self.POST_REG_TFMS,
-                          self.BLENDING_MODULE)
+        fusion.run_fusion(
+            DATASET,
+            OUTPUT_PARAMS,
+            self.RUNTIME_PARAMS,
+            self.CELL_SIZE,
+            self.POST_REG_TFMS,
+            self.BLENDING_MODULE,
+        )
 
         # Read output and compare with ground truth
         fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)
         self.assertTrue(np.all(np.abs(fused_data - ground_truth) < 2))
-        
 
     def test_fusion_in_y_axis(self):
         # Generate Dataset
         ground_truth, DATASET = generate_y_lin_blend_dataset()
 
         # Generate Output Parameters
-        zarr_path = str(
-            Path(self.output_path) / "fused_in_y.zarr"
-        )
+        zarr_path = str(Path(self.output_path) / "fused_in_y.zarr")
         OUTPUT_PARAMS = io.OutputParameters(
             path=zarr_path,
             chunksize=(1, 1, 100, 100, 100),
             resolution_zyx=(1.0, 1.0, 1.0),
-            datastore=0
+            datastore=0,
         )
 
         # Init and Run Fusion
@@ -129,14 +126,18 @@ class TestFusion(unittest.TestCase):
                     worker_cells.append((z, y, x))
         self.RUNTIME_PARAMS.worker_cells = worker_cells
 
-        self.BLENDING_MODULE = blend.WeightedLinearBlending(tile_aabbs=tile_aabbs)
+        self.BLENDING_MODULE = blend.WeightedLinearBlending(
+            tile_aabbs=tile_aabbs
+        )
 
-        fusion.run_fusion(DATASET,
-                          OUTPUT_PARAMS,
-                          self.RUNTIME_PARAMS,
-                          self.CELL_SIZE,
-                          self.POST_REG_TFMS,
-                          self.BLENDING_MODULE)
+        fusion.run_fusion(
+            DATASET,
+            OUTPUT_PARAMS,
+            self.RUNTIME_PARAMS,
+            self.CELL_SIZE,
+            self.POST_REG_TFMS,
+            self.BLENDING_MODULE,
+        )
 
         # Read output and compare with ground truth
         fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)
@@ -146,20 +147,20 @@ class TestFusion(unittest.TestCase):
         # Generate Dataset
         ground_truth, DATASET = generate_real_dataset()
 
-        zarr_path = str(
-            Path(self.output_path) / "fused_real_data.zarr"
-        )
+        zarr_path = str(Path(self.output_path) / "fused_real_data.zarr")
 
         OUTPUT_PARAMS = io.OutputParameters(
             path=zarr_path,
             chunksize=(1, 1, 100, 100, 100),
-            resolution_zyx=(1.0, 0.256, 0.256),  # Preserving original resolution.
-            datastore=0
+            resolution_zyx=(
+                1.0,
+                0.256,
+                0.256,
+            ),  # Preserving original resolution.
+            datastore=0,
         )
         RUNTIME_PARAMS = io.RuntimeParameters(
-            option=0,
-            pool_size=16,
-            worker_cells=[]
+            option=0, pool_size=16, worker_cells=[]
         )
         POST_REG_TFMS = []
         CELL_SIZE = [100, 100, 100]
@@ -180,12 +181,14 @@ class TestFusion(unittest.TestCase):
 
         BLENDING_MODULE = blend.WeightedLinearBlending(tile_aabbs=tile_aabbs)
 
-        fusion.run_fusion(DATASET,
-                        OUTPUT_PARAMS,
-                        RUNTIME_PARAMS,
-                        CELL_SIZE,
-                        POST_REG_TFMS,
-                        BLENDING_MODULE)
+        fusion.run_fusion(
+            DATASET,
+            OUTPUT_PARAMS,
+            RUNTIME_PARAMS,
+            CELL_SIZE,
+            POST_REG_TFMS,
+            BLENDING_MODULE,
+        )
 
         # Read output and compare with ground truth
         fused_data = self._read_zarr_zyx_volume(OUTPUT_PARAMS.path)

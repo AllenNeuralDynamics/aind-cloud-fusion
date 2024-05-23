@@ -6,18 +6,18 @@ for individual worker runtimes.
 An example yaml schema names 'data contract' provided below.
 """
 
-from collections import OrderedDict
-from datetime import datetime
 import glob
 import os
-import xmltodict
-
-import numpy as np
+from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 
-import aind_cloud_fusion.io as io
+import numpy as np
+import xmltodict
+
 import aind_cloud_fusion.fusion as fusion
 import aind_cloud_fusion.geometry as geometry
+import aind_cloud_fusion.io as io
 import aind_cloud_fusion.script_utils as script_utils
 
 """
@@ -32,9 +32,10 @@ output_path: "s3://<YOUR OUTPUT PATH>"
 worker_cells: [list of cell 3-ples]
 """
 
-def create_starter_ymls(xml_path: str,
-                        output_path: str,
-                        num_workers: int = 64):
+
+def create_starter_ymls(
+    xml_path: str, output_path: str, num_workers: int = 64
+):
     """
     xml_path: Local xml path
     output_path: Local results path
@@ -49,14 +50,16 @@ def create_starter_ymls(xml_path: str,
     parsed_path = data["SpimData"]["SequenceDescription"]["ImageLoader"][
         "zarr"
     ]["#text"]
-    parts = parsed_path.split('/')
-    if 'root' in parts:
-        parts.remove('root')
-    if 'capsule' in parts:
-        parts.remove('capsule')
-    input_s3_path = 's3://aind-open-data/' + parts[2] + '/' + parts[3] + '/'
+    parts = parsed_path.split("/")
+    if "root" in parts:
+        parts.remove("root")
+    if "capsule" in parts:
+        parts.remove("capsule")
+    input_s3_path = "s3://aind-open-data/" + parts[2] + "/" + parts[3] + "/"
     datetime_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_s3_path_base = 's3://aind-open-data/' + parts[2] + f'_full_res_{datetime_str}/'
+    output_s3_path_base = (
+        "s3://aind-open-data/" + parts[2] + f"_full_res_{datetime_str}/"
+    )
 
     # Init application objects to init fusion scheduling.
     # Application Object: DATASET
@@ -109,36 +112,38 @@ def create_starter_ymls(xml_path: str,
     channels = script_utils.get_unique_channels_for_dataset(input_s3_path)
     total_cells = len(cell_coords) * channels
     n = int(np.ceil(total_cells / num_workers))
-    print(f'Each worker assigned {n} cells')
+    print(f"Each worker assigned {n} cells")
 
     for worker_id in range(num_workers):
         for i, ch in enumerate(channels):
-            print(f'Generating Worker {worker_id} Yaml')
+            print(f"Generating Worker {worker_id} Yaml")
             start = worker_id * n
             end = (worker_id + 1) * n
             worker_cells = cell_coords[start:end, :].tolist()
 
             if i == 0:
-                dataset_type = 'BigStitcherDataset'
+                dataset_type = "BigStitcherDataset"
             else:
-                dataset_type = 'BigStitcherDatasetChannel'
+                dataset_type = "BigStitcherDatasetChannel"
 
             ch_X_configs = {}
-            ch_X_configs['dataset_type'] = dataset_type
-            ch_X_configs['channel'] = ch
-            ch_X_configs['input_path'] = input_s3_path
-            ch_X_configs['output_path'] = output_s3_path_base + f'channel_{ch}.zarr'
-            ch_X_configs['worker_cells'] = worker_cells
-            script_utils.write_config_yaml(str(output_path / f'worker_{worker_id}.yml'), ch_X_configs)
+            ch_X_configs["dataset_type"] = dataset_type
+            ch_X_configs["channel"] = ch
+            ch_X_configs["input_path"] = input_s3_path
+            ch_X_configs["output_path"] = (
+                output_s3_path_base + f"channel_{ch}.zarr"
+            )
+            ch_X_configs["worker_cells"] = worker_cells
+            script_utils.write_config_yaml(
+                str(output_path / f"worker_{worker_id}.yml"), ch_X_configs
+            )
 
 
-if __name__ == '__main__':
-    xml_path = str(glob.glob('../data/**/*.xml')[0])
-    output_path = str(os.path.abspath('../results'))
+if __name__ == "__main__":
+    xml_path = str(glob.glob("../data/**/*.xml")[0])
+    output_path = str(os.path.abspath("../results"))
 
-    print(f'{xml_path=}')
-    print(f'{output_path=}')
+    print(f"{xml_path=}")
+    print(f"{output_path=}")
 
-    create_starter_ymls(xml_path,
-                        output_path,
-                        num_workers = 1000)
+    create_starter_ymls(xml_path, output_path, num_workers=1000)

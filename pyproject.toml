@@ -25,7 +25,8 @@ dependencies = [
     'dask[distributed]==2024.1.0',
     'Pillow==10.1.0',
     'boto3',
-    'tensorstore==0.1.56'
+    'tensorstore==0.1.56',
+    'tenacity==8.3.0'
 ]
 
 [project.optional-dependencies]

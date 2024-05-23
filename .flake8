@@ -2,7 +2,8 @@
 exclude =
     .git,
     __pycache__,
-    build
+    build, 
+    examples/
 max-complexity = 10
 max-line-length = 120
 ignore = E203, W503
