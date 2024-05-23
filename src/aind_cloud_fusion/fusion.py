@@ -306,7 +306,7 @@ def get_cell_count_zyx(
     return z_cnt, y_cnt, x_cnt
 
 
-def run_fusion(
+def run_fusion(  # noqa: C901
     # client,    # Uncomment for testing in jupyterlab
     dataset: io.Dataset,
     output_params: io.OutputParameters,
@@ -478,9 +478,9 @@ def run_fusion(
         start_run = time.time()
 
         batch_start = start_run
-        client = Client(
+        client = Client(  # noqa: F841
             LocalCluster(
-                n_workers=runtime_params.pool_size,  # noqa: F841
+                n_workers=runtime_params.pool_size,
                 threads_per_worker=1,
                 processes=True,
             )

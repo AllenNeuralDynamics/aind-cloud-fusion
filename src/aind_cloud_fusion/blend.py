@@ -147,7 +147,7 @@ def get_overlap_regions(
 
         try:
             o_aabb = _get_overlap_aabb(aabb_1, aabb_2)
-        except:
+        except:  # noqa: E722
             continue
 
         overlaps[overlap_id] = o_aabb
