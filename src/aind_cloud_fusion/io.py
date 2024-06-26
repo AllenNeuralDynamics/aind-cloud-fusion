@@ -547,8 +547,9 @@ class RuntimeParameters:
     option:
         0: single process exectution
         1: multiprocessing execution
-        2: dask execution
-    pool_size: number of processes/vCPUs for options {1, 2}
+        2: local dask cluster execution
+        3: dask-emr execution
+    pool_size: number of processes/vCPUs for options {1, 2, 3}
     worker_cells:
         list of cells/chunks this execution operates on
     """
