@@ -12,6 +12,7 @@ import tensorstore as ts
 import torch
 import zarr
 from dask.distributed import Client, LocalCluster
+from dask_yarn import YarnCluster
 
 import aind_cloud_fusion.blend as blend
 import aind_cloud_fusion.geometry as geometry
@@ -478,13 +479,18 @@ def run_fusion(  # noqa: C901
         start_run = time.time()
 
         batch_start = start_run
-        client = Client(  # noqa: F841
-            LocalCluster(
-                n_workers=runtime_params.pool_size,
-                threads_per_worker=1,
-                processes=True,
-            )
+
+        cluster = LocalCluster(
+            n_workers=runtime_params.pool_size,
+            threads_per_worker=1,
+            processes=True,
         )
+        if not (runtime_params.custom_cluster is None):
+            assert isinstance(runtime_params.custom_cluster, LocalCluster), \
+                print('RuntimeParameters.custom_cluster must be LocalCluster type.')
+            cluster = runtime_params.custom_cluster
+        client = Client(cluster)  # noqa: F841
+
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
         num_cells = len(runtime_params.worker_cells)
@@ -535,6 +541,69 @@ def run_fusion(  # noqa: C901
         batch_start = time.time()
 
         LOGGER.info(f"Runtime: {time.time() - start_run}")
+
+    # Dask-EMR
+    elif runtime_params.option == 3:
+        assert not (runtime_params.custom_cluster is None), \
+            print('RuntimeParameters.custom_cluster is required for Dask-EMR execution.')
+        assert isinstance(runtime_params.custom_cluster, YarnCluster), \
+            print('RuntimeParameters.custom_cluster must be YarnCluster type.')
+
+        start_run = time.time()
+
+        batch_start = start_run
+        client = Client(runtime_params.custom_cluster)  # noqa: F841
+
+        num_cells = len(runtime_params.worker_cells)
+        batch_size = 1000  # Good batch size for 128^3.
+        LOGGER.info(f"Coloring {num_cells} cells")
+        LOGGER.info(f"Batch Size: {batch_size}")
+
+        delayed_color_cells = []
+        for cell_num, cell in enumerate(runtime_params.worker_cells):
+            z, y, x = cell
+            delayed_color_cells.append(
+                dask.delayed(color_cell, pure=True)(
+                    tile_arrays,
+                    tile_transforms,
+                    tile_sizes_zyx,
+                    tile_aabbs,
+                    output_volume,
+                    output_volume_origin,
+                    cell_size,
+                    blend_module,
+                    z,
+                    y,
+                    x,
+                    torch.device("cpu"),  # Hardcoding CPU cluster
+                    LOGGER,
+                )
+            )
+            # Batching
+            if len(delayed_color_cells) == batch_size:
+                LOGGER.info(f"Calculating up to {cell_num}/{num_cells}...")
+                da.compute(*delayed_color_cells)
+
+                # Clear memory for runtime stability
+                delayed_color_cells = []
+
+                LOGGER.info(
+                    f"Finished up to {cell_num}/{num_cells}. Batch time: {time.time() - batch_start}"
+                )
+                batch_start = time.time()
+
+        # Compute remaining cells
+        LOGGER.info(f"Calculating up to {num_cells}/{num_cells}...")
+        da.compute(*delayed_color_cells)
+        delayed_color_cells = []
+        LOGGER.info(
+            f"Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}"
+        )
+        batch_start = time.time()
+
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
+
+        client.shutdown()
 
 
 def color_cell(

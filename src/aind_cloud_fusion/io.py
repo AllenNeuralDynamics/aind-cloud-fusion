@@ -6,11 +6,13 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional, Union
 
 import boto3
 import dask.array as da
+from dask.distributed import LocalCluster
+from dask_yarn import YarnCluster
 import numpy as np
-import tenacity
 import tensorstore as ts
 import xmltodict
 import yaml
@@ -520,11 +522,6 @@ class OutputTensorstore(OutputArray):
     def __init__(self, arr: ts.TensorStore):
         self.arr = arr
 
-    # Retry this write with exponential backoff.
-    # Retries 1s -> 2s -> 4s -> 8s -> 10s, then repeats fixed 10s until error is resolved.
-    @tenacity.retry(
-        wait=tenacity.wait_exponential(multiplier=1, min=1, max=10)
-    )
     def __setitem__(self, index, value):
         self.arr[index].write(value).result()
 
@@ -547,12 +544,20 @@ class RuntimeParameters:
     option:
         0: single process exectution
         1: multiprocessing execution
-        2: dask execution
-    pool_size: number of processes/vCPUs for options {1, 2}
+        2: local dask cluster execution
+        3: dask-emr execution
+    pool_size: number of processes/vCPUs for options {1, 2, 3}
+        This parameter is used to initalize a basic cluster for options {2, 3}.
     worker_cells:
         list of cells/chunks this execution operates on
+    custom_cluster: Custom cluster configuration for options {2, 3}.
+        For {0, 1}, this parameter is ignored.
+        For 2, custom_cluster is an optional LocalCluster obj, and
+        the most basic cluster is init based on pool_size.
+        For 3, custom_cluster is a necessary YarnCluster obj.
     """
 
     option: int
     pool_size: int
     worker_cells: list[tuple[int, int, int]]
+    custom_cluster: Optional[Union[LocalCluster, YarnCluster]] = None
