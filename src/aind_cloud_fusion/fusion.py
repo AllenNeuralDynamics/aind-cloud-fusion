@@ -479,13 +479,18 @@ def run_fusion(  # noqa: C901
         start_run = time.time()
 
         batch_start = start_run
-        client = Client(  # noqa: F841
-            LocalCluster(
-                n_workers=runtime_params.pool_size,
-                threads_per_worker=1,
-                processes=True,
-            )
+
+        cluster = LocalCluster(
+            n_workers=runtime_params.pool_size,
+            threads_per_worker=1,
+            processes=True,
         )
+        if not (runtime_params.custom_cluster is None):
+            assert isinstance(runtime_params.custom_cluster, LocalCluster), \
+                print('RuntimeParameters.custom_cluster must be LocalCluster type.')
+            cluster = runtime_params.custom_cluster
+        client = Client(cluster)  # noqa: F841
+
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
         num_cells = len(runtime_params.worker_cells)
@@ -537,15 +542,17 @@ def run_fusion(  # noqa: C901
 
         LOGGER.info(f"Runtime: {time.time() - start_run}")
 
+    # Dask-EMR
     elif runtime_params.option == 3:
+        assert not (runtime_params.custom_cluster is None), \
+            print('RuntimeParameters.custom_cluster is required for Dask-EMR execution.')
+        assert isinstance(runtime_params.custom_cluster, YarnCluster), \
+            print('RuntimeParameters.custom_cluster must be YarnCluster type.')
+
         start_run = time.time()
 
         batch_start = start_run
-        client = Client(  # noqa: F841
-            YarnCluster(
-                n_workers=runtime_params.pool_size,
-            )
-        )
+        client = Client(runtime_params.custom_cluster)  # noqa: F841
 
         num_cells = len(runtime_params.worker_cells)
         batch_size = 1000  # Good batch size for 128^3.
@@ -595,6 +602,8 @@ def run_fusion(  # noqa: C901
         batch_start = time.time()
 
         LOGGER.info(f"Runtime: {time.time() - start_run}")
+
+        client.shutdown()
 
 
 def color_cell(
