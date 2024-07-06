@@ -395,13 +395,14 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
     """
 
     def __init__(
-        self, xml_path: str, s3_path: str, channel_num: int, datastore: int
+        self, xml_path: str, s3_path: str, channel_num: int, datastore: int, smartspim=False
     ):
         """
         Only new information required is channel number.
         """
         super().__init__(xml_path, s3_path, datastore)
         self.channel_num = channel_num
+        self.smartspim = smartspim
 
         self.tile_cache: dict[int, InputArray] = {}
 
@@ -413,6 +414,9 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
         if len(self.tile_cache) != 0:
             return self.tile_cache
+
+        if self.smartspim:
+            return self._get_smartspim_tile_volumes_tczyx()
 
         # Otherwise fetch for first time
         tile_arrays: dict[int, InputArray] = {}
@@ -478,6 +482,55 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
                     print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
                     tile_arrays[int(tile_id)] = arr
+
+        self.tile_cache = tile_arrays
+
+        return tile_arrays
+
+    def _get_smartspim_tile_volumes_tczyx(self) -> dict[int, InputArray]:
+        """
+        Smartspim does not follow the same naming convention as exaspim/dispim.
+        The naming convention is so divergent, this method exists.
+        """
+
+        tile_arrays: dict[int, InputArray] = {}
+
+        with open(self.xml_path, "r") as file:
+            data: OrderedDict = xmltodict.parse(file.read())
+        tile_id_lut = {}
+        for zgroup in data["SpimData"]["SequenceDescription"]["ImageLoader"][
+            "zgroups"
+        ]["zgroup"]:
+            tile_id = zgroup["@setup"]
+            tile_name = zgroup["path"]
+            tile_id_lut[tile_name] = int(tile_id)
+
+        # Reference path: s3://aind-open-data/SmartSPIM_{number}/SmartSPIM/Channel/Tilename.zarr
+        # Reference tilename: #####_#####.zarr, which is consistent across channels.
+        slash_2 = self.s3_path.find("/", self.s3_path.find("/") + 1)
+        slash_3 = self.s3_path.find(
+            "/", self.s3_path.find("/", self.s3_path.find("/") + 1) + 1
+        )
+        bucket_name = self.s3_path[slash_2 + 1 : slash_3]
+        directory_path = self.s3_path[slash_3 + 1 :]
+
+        for p in self._list_bucket_directory(bucket_name, directory_path):
+            if p.endswith(".zarr"):
+                continue
+
+            full_resolution_p = self.s3_path + p + "/0"
+            tile_id = tile_id_lut[p]
+
+            arr = None
+            if self.datastore == 0:  # Dask
+                tile_zarr = da.from_zarr(full_resolution_p)
+                arr = InputDask(tile_zarr)
+
+            if self.datastore == 1:
+                assert False, print('This is not supported.')
+
+            print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
+            tile_arrays[int(tile_id)] = arr
 
         self.tile_cache = tile_arrays
 
