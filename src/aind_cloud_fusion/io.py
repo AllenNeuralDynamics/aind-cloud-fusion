@@ -6,12 +6,11 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 import boto3
 import dask.array as da
 from dask.distributed import LocalCluster
-from dask_yarn import YarnCluster
 import numpy as np
 import tensorstore as ts
 import xmltodict
@@ -554,10 +553,9 @@ class RuntimeParameters:
         For {0, 1}, this parameter is ignored.
         For 2, custom_cluster is an optional LocalCluster obj, and
         the most basic cluster is init based on pool_size.
-        For 3, custom_cluster is a necessary YarnCluster obj.
     """
 
     option: int
     pool_size: int
     worker_cells: list[tuple[int, int, int]]
-    custom_cluster: Optional[Union[LocalCluster, YarnCluster]] = None
+    custom_cluster: Optional[LocalCluster] = None
