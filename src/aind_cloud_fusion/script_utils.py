@@ -3,6 +3,7 @@ Utilities for scripts.
 """
 
 import re
+from pathlib import Path
 
 import boto3
 import yaml
@@ -105,3 +106,10 @@ def get_unique_channels_for_dataset(dataset_path: str) -> list:
             unique_list_of_channels.append(channel)
 
     return unique_list_of_channels
+
+
+def get_folder_regex(dataset_path, regex):
+    dataset_path = Path(dataset_path)
+    print(f"Reading data from: {dataset_path}")
+    channels = [str(i) for i in list(dataset_path.glob(regex))]
+    return channels

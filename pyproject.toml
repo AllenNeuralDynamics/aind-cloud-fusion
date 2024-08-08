@@ -22,11 +22,11 @@ dependencies = [
     'nptyping==2.5.0',
     'zarr==2.16.1',
     's3fs==2023.9.2',
-    'dask[distributed]==2024.1.0',
+    'dask[distributed]==2023.8.0',
     'Pillow==10.1.0',
     'boto3',
     'tensorstore==0.1.56',
-    'dask-yarn==0.9,
+    'dask-yarn==0.9',
 ]
 
 [project.optional-dependencies]

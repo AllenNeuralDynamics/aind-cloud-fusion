@@ -2,6 +2,7 @@
 Defines all standard input to fusion algorithm.
 """
 
+import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -10,12 +11,12 @@ from typing import Optional, Union
 
 import boto3
 import dask.array as da
-from dask.distributed import LocalCluster
-from dask_yarn import YarnCluster
 import numpy as np
 import tensorstore as ts
 import xmltodict
 import yaml
+from dask.distributed import LocalCluster
+from dask_yarn import YarnCluster
 from numcodecs import Blosc
 
 import aind_cloud_fusion.geometry as geometry
@@ -395,7 +396,12 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
     """
 
     def __init__(
-        self, xml_path: str, s3_path: str, channel_num: int, datastore: int, smartspim=False
+        self,
+        xml_path: str,
+        s3_path: str,
+        channel_num: int,
+        datastore: int,
+        smartspim=False,
     ):
         """
         Only new information required is channel number.
@@ -487,7 +493,9 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
         return tile_arrays
 
-    def _get_smartspim_tile_volumes_tczyx(self) -> dict[int, InputArray]:
+    def _get_smartspim_tile_volumes_tczyx(
+        self, multiscale: Optional[str] = "0"
+    ) -> dict[int, InputArray]:
         """
         Smartspim does not follow the same naming convention as exaspim/dispim.
         The naming convention is so divergent, this method exists.
@@ -514,23 +522,54 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
         bucket_name = self.s3_path[slash_2 + 1 : slash_3]
         directory_path = self.s3_path[slash_3 + 1 :]
 
-        for p in self._list_bucket_directory(bucket_name, directory_path):
-            if p.endswith(".zarr"):
-                continue
+        print("BUCKET name: ", bucket_name)
+        print("DIRECTORY PATH: ", directory_path)
+        print("S3 path: ", self.s3_path)
+        print("Tile id lut: ", tile_id_lut)
 
-            full_resolution_p = self.s3_path + p + "/0"
-            tile_id = tile_id_lut[p]
+        if self.s3_path.startswith("s3://"):
 
-            arr = None
-            if self.datastore == 0:  # Dask
-                tile_zarr = da.from_zarr(full_resolution_p)
-                arr = InputDask(tile_zarr)
+            for p in self._list_bucket_directory(bucket_name, directory_path):
+                if p.endswith(".zgroup"):
+                    continue
 
-            if self.datastore == 1:
-                assert False, print('This is not supported.')
+                full_resolution_p = self.s3_path + p + f"/{multiscale}"
+                tile_id = tile_id_lut[p]
 
-            print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
-            tile_arrays[int(tile_id)] = arr
+                arr = None
+                if self.datastore == 0:  # Dask
+                    tile_zarr = da.from_zarr(full_resolution_p)
+                    arr = InputDask(tile_zarr)
+
+                if self.datastore == 1:
+                    assert False, print("This is not supported.")
+
+                print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
+                tile_arrays[int(tile_id)] = arr
+
+        else:
+            # Reading data localy
+            local_dir = Path(os.path.abspath(self.s3_path))
+
+            for zarr_tile in local_dir.glob("*.zarr"):
+
+                full_resolution_p = zarr_tile.joinpath(multiscale)
+                tile_id = tile_id_lut[zarr_tile.name]
+
+                arr = None
+                if self.datastore == 0:  # Dask
+                    tile_zarr = da.from_zarr(full_resolution_p)
+                    arr = InputDask(tile_zarr)
+
+                if self.datastore == 1:
+                    assert False, print("This is not supported.")
+
+                print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
+                tile_arrays[int(tile_id)] = arr
+
+            # print("Zarr tiles: ", tile_arrays)
+
+            # raise ValueError("Not implemented yet")
 
         self.tile_cache = tile_arrays
 
