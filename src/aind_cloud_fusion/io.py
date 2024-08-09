@@ -544,15 +544,17 @@ class RuntimeParameters:
         0: single process exectution
         1: multiprocessing execution
         2: local dask cluster execution
-        3: dask-emr execution
-    pool_size: number of processes/vCPUs for options {1, 2, 3}
-        This parameter is used to initalize a basic cluster for options {2, 3}.
+        3: optimized data loading
+    pool_size: number of processes/vCPUs for options {1, 2}
     worker_cells:
-        list of cells/chunks this execution operates on
-    custom_cluster: Custom cluster configuration for options {2, 3}.
-        For {0, 1}, this parameter is ignored.
-        For 2, custom_cluster is an optional LocalCluster obj, and
-        the most basic cluster is init based on pool_size.
+        list of cells/chunks this execution operates on.
+        This allows you to control how much of the output volume to color.
+    custom_cluster: Custom cluster configuration for option 2.
+
+    NOTE:
+    For option 3, worker cells is ignored.
+    The custom cpu cluster performs data loading/writing,
+    and optionally the processing as well.
     """
 
     option: int

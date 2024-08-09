@@ -1,8 +1,12 @@
 """Core fusion algorithm."""
 
+from __future__ import annotations
+from collections.abc import Iterator
 import logging
 import os
 import time
+from typing import Generator
+import gc
 
 import dask
 import dask.array as da
@@ -12,10 +16,12 @@ import tensorstore as ts
 import torch
 import zarr
 from dask.distributed import Client, LocalCluster
+import multiprocessing as mp
 
 import aind_cloud_fusion.blend as blend
 import aind_cloud_fusion.geometry as geometry
 import aind_cloud_fusion.io as io
+import aind_cloud_fusion.fusion_utils as utils
 
 
 def initialize_fusion(
@@ -34,17 +40,19 @@ def initialize_fusion(
     -------
     tile_arrays: Dictionary of input tile arrays
     tile_transforms: Dictionary of (list of) registrations associated with each tile
-    tile_sizes: Dictionary of tile sizes
+    tile_sizes_zyx: Dictionary of tile sizes
     tile_aabbs: Dictionary of AABB of each transformed tile
     output_volume_size: Size of output volume
     output_volume_origin: Location of output volume
     """
 
+    # Output Data Structures-- tile_arrays, tile_transforms
     tile_arrays: dict[int, io.InputArray] = dataset.tile_volumes_tczyx
-
     tile_transforms: dict[int, list[geometry.Transform]] = (
         dataset.tile_transforms_zyx
     )
+
+    # Augment tile_transforms for deskewing/anisotropy support
     input_resolution_zyx: tuple[float, float, float] = (
         dataset.tile_resolution_zyx
     )
@@ -52,7 +60,6 @@ def initialize_fusion(
     scale_input_zyx = geometry.Affine(
         np.array([[iz, 0, 0, 0], [0, iy, 0, 0], [0, 0, ix, 0]])
     )
-
     output_resolution_zyx: tuple[float, float, float] = (
         output_params.resolution_zyx
     )
@@ -68,12 +75,12 @@ def initialize_fusion(
             sample_output_zyx,
         ]
 
+
+    # Output Data Structures-- tile_sizes_zyx, tile_aabbs
     tile_sizes_zyx: dict[int, tuple[int, int, int]] = {}
     tile_aabbs: dict[int, geometry.AABB] = {}
     tile_boundary_point_cloud_zyx = []
-
     for tile_id, tile_arr in tile_arrays.items():
-        tile_sizes_zyx[tile_id] = zyx = tile_arr.shape[2:]
         tile_sizes_zyx[tile_id] = zyx = tile_arr.shape[2:]
         tile_boundaries = torch.Tensor(
             [
@@ -100,6 +107,8 @@ def initialize_fusion(
         tile_boundary_point_cloud_zyx, dim=0
     )
 
+
+    # Output Data Structures-- OUTPUT_VOLUME_SIZE, OUTPUT_VOLUME_ORIGIN
     # Resolve Output Volume Dimensions and Absolute Position
     global_tile_boundaries = geometry.aabb_3d(tile_boundary_point_cloud_zyx)
     OUTPUT_VOLUME_SIZE = [
@@ -131,8 +140,8 @@ def initialize_fusion(
         torch.min(tile_boundary_point_cloud_zyx[:, 2]).item(),
     )
 
-    # Shift AABB's into Output Volume where
-    # absolute position of output volume is moved to (0, 0, 0)
+    # Final update to output tile_aabbs.
+    # Shift AABB's into OUTPUT_VOLUME.
     for tile_id, t_aabb in tile_aabbs.items():
         updated_aabb = (
             t_aabb[0] - OUTPUT_VOLUME_ORIGIN[0],
@@ -293,15 +302,15 @@ def initialize_output_volume(
 
 
 def get_cell_count_zyx(
-    output_volume_size: tuple[int, int, int], cell_size: tuple[int, int, int]
+    volume_size: tuple[int, int, int], cell_size: tuple[int, int, int]
 ) -> tuple[int, int, int]:
     """
     Total amount of z,y, and x cells returned in that order.
     Input sizes are in canonical zyx order.
     """
-    z_cnt = int(np.ceil(output_volume_size[0] / cell_size[0]))
-    y_cnt = int(np.ceil(output_volume_size[1] / cell_size[1]))
-    x_cnt = int(np.ceil(output_volume_size[2] / cell_size[2]))
+    z_cnt = int(np.ceil(volume_size[0] / cell_size[0]))
+    y_cnt = int(np.ceil(volume_size[1] / cell_size[1]))
+    x_cnt = int(np.ceil(volume_size[2] / cell_size[2]))
 
     return z_cnt, y_cnt, x_cnt
 
@@ -538,6 +547,97 @@ def run_fusion(  # noqa: C901
             f"Finished up to {num_cells}/{num_cells}. Batch time: {time.time() - batch_start}"
         )
         batch_start = time.time()
+
+        LOGGER.info(f"Runtime: {time.time() - start_run}")
+
+    # Optimized Data Loading
+    elif runtime_params.option == 3:
+        start_run = time.time()
+
+        batch_start = start_run
+
+        cluster = LocalCluster(
+            n_workers=runtime_params.pool_size,
+            threads_per_worker=1,
+            processes=True,
+        )
+        if not (runtime_params.custom_cluster is None):
+            assert isinstance(runtime_params.custom_cluster, LocalCluster), \
+                print('RuntimeParameters.custom_cluster must be LocalCluster type.')
+            cluster = runtime_params.custom_cluster
+        client = Client(cluster)  # noqa: F841
+
+        # NOTE: Hardcoding this cell_size computation for now
+        cell_size = calculate_cell_size(gpu_mem_gb=24)
+
+        # NOTE: This method can only use max projection
+        blend_module = blend.MaxProjection()
+
+        # Calculate total cells for logging
+        z_cnt, y_cnt, x_cnt = \
+            get_cell_count_zyx(output_volume_size, (cell_size, cell_size, cell_size))
+        total_cells = z_cnt * y_cnt * x_cnt
+        run_start = time.time()
+        batch_start = time.time()
+
+        # Dataloading on CPU
+        cloud_queue = CloudQueue(tile_arrays,
+                                 tile_transforms,
+                                 tile_sizes_zyx,
+                                 tile_aabbs,
+                                 output_volume_size,
+                                 output_volume_origin,
+                                 cell_size,
+                                 client)
+        cloud_queue.start_reading()
+
+        # Processing on GPU
+        for i, (cell_aabb, src_ids, src_tensors) in enumerate(cloud_queue):
+            blended_cell: torch.Tensor = \
+                torch.zeros((cell_aabb[1] - cell_aabb[0],
+                             cell_aabb[3] - cell_aabb[2],
+                             cell_aabb[5] - cell_aabb[4]),
+                             pin_memory=True).to('cuda:0')
+
+            # Sample the preloaded images and blend them together
+            for (s_id, s_tensor) in zip(src_ids, src_tensors):
+                sample_field = \
+                    utils.calculate_sample_field(cell_aabb,
+                                                 output_volume_origin,
+                                                 tile_transforms[s_id],
+                                                 tile_sizes_zyx[s_id],
+                                                 device='cuda:0')
+
+                sample_field = utils.interpolate(s_tensor,
+                                                 sample_field,
+                                                 device='cuda:0')
+
+                blended_cell = blend_module([blended_cell, sample_field])
+
+                # Clear intermediate tensors off GPU, keep blended cell.
+                del s_tensor
+                del sample_field
+                gc.collect()
+                torch.cuda.empty_cache()
+
+            # Write the blended cell to the output volume.
+            output_slice = (
+                slice(0, 1),
+                slice(0, 1),
+                slice(cell_aabb[0], cell_aabb[1]),
+                slice(cell_aabb[2], cell_aabb[3]),
+                slice(cell_aabb[4], cell_aabb[5]),
+            )
+            # Convert from float32 -> canonical uint16
+            output_chunk = np.array(blended_cell.cpu()).astype(np.uint16)
+            output_volume[output_slice] = output_chunk
+
+            if i % 200 == 0:
+                LOGGER.info(
+                    f"""Finished up to {i}/{total_cells}.
+                    Batch time: {time.time() - batch_start}"""
+                )
+                batch_start = time.time()
 
         LOGGER.info(f"Runtime: {time.time() - start_run}")
 
@@ -787,3 +887,175 @@ def color_cell(
 
     del fused_cell
     del output_chunk
+
+def calculate_cell_size(gpu_mem_gb: int) -> int:
+    """
+    Calculates suggested cell_size^3
+    for maximum GPU memory utilization.
+
+    Derivation:
+    -> ASSUMING IMAGE_CROP ~ FLOW_FIELD
+
+    cell_size * 2 == image_crop + flow_field in interpolation
+    4 bytes == int32, which is standard PyTorch Tensor dtype.
+    1e9 == number of bytes in GB
+
+    -> GPU_memory [GB] >= (cell_size^3 * 3) * (4 bytes / 1e+9) [GB]
+    -> cell_size <= ((GPU_memory * (1e9 / 4)) / 3) ^ (1/3)
+
+    Reference Table:
+    8 GB -- 873 ~> 2^9 = 512
+    16 GB -- 1100 ~> 2^10 = 1024
+    24 GB -- 1259 ~> 2^10 = 1024
+    32 GB -- 1386 ~> 2^10 - 1024
+    """
+
+    cell_size = ((gpu_mem_gb * (1e9 / 4)) / 2) ** (1/3)
+    nearest_pow2 = int(2**np.floor(np.log2(cell_size)))
+
+    return nearest_pow2
+
+class CloudQueue(Iterator):
+    def __init__(
+        self,
+        tile_arrays: dict[int, io.InputArray],
+        tile_transforms: dict[int, list[geometry.Transform]],
+        tile_sizes_zyx: dict[int, tuple[int, int, int]],
+        tile_aabbs: dict[int, geometry.AABB],
+        output_volume_size: tuple[int, int, int],
+        output_volume_origin: tuple[float, float, float],
+        cell_size: tuple[int, int, int],
+        client: Client
+    ) -> None:
+        """
+        Input fields are produced from
+        fusion.initalize_fusion(..)
+
+        Following codebase convention,
+        input 3-ples are expected in zyx order.
+        """
+
+        # Store input arguments
+        self.tile_arrays: dict[int, io.InputArray] = tile_arrays
+        self.tile_transforms: dict[int, list[geometry.Transform]] = tile_transforms
+        self.tile_sizes_zyx: dict[int, tuple[int, int, int]] = tile_sizes_zyx
+        self.tile_aabbs: dict[int, geometry.AABB] = tile_aabbs
+        self.output_volume_size: tuple[int, int, int] = output_volume_size
+        self.output_volume_origin: tuple[float, float, float] = output_volume_origin
+        self.cell_size: tuple[int, int, int] = cell_size
+        self.client: Client = client
+
+        # Initalize key components
+        # Data queue elements are:
+        # (cell_aabb, (contributing src volumes))
+        self.background_worker: mp.Process = mp.Process(target=self._background_worker_fn)
+        self.data_queue: mp.Queue = mp.Queue(maxsize=2)  # Queue does not need to be large
+
+        # Important flag to signal cell_generator is exhausted
+        self.finished_loading: bool = False
+
+    def _background_worker_fn(self) -> None:
+        """
+        Background process responsible
+        for iterating through cell generator,
+        determining which tiles contribute to the cell,
+        and submitting parallel read jobs.
+
+        The resulting source volumes are batched together
+        and placed in CloudQueue.data_queue for consumption.
+        """
+
+        for cell_aabb in self._cell_generator:
+            # Eagerly prep data to refresh queue
+            src_tensors: list[torch.Tensor] = []
+            src_ids: list[int] = []
+
+            colliding_tids: list[int] = [t_id
+                for (t_id, t_aabb) in self.tile_aabbs.items()
+                if utils.check_collision(cell_aabb, t_aabb)]
+            for t_id in colliding_tids:
+                image_slice: tuple[slice, slice, slice, slice, slice] = \
+                utils.calculate_image_crop(cell_aabb,
+                                           self.output_volume_origin,
+                                           self.tile_transforms[t_id],
+                                           self.tile_sizes_zyx[t_id],
+                                           device='cpu')
+                src_tensor = self._cloud_read(self.tile_arrays[t_id],
+                                              image_slice)
+                src_ids.append(t_id)
+                src_tensors.append(src_tensor)
+
+            # Wait until spot in queue opens...
+            while self.data_queue.full():
+                time.sleep(1)
+
+            # Then write to the queue
+            entry = (cell_aabb, tuple(src_ids), tuple(src_tensors))
+            self.data_queue.put(entry)
+
+        # Finally, set flag
+        self.finished_loading = True
+
+    def _cell_generator(self) -> Generator[geometry.AABB]:
+        """
+        Yields cells inside output volume.
+        Truncates cells near the boundary if necessary.
+
+        Usage:
+        - Generators are iterators. Use in a for loop.
+        Ex. for cell in self._cell_generator: ...
+
+        - When a value is yielded, the state/line pointer
+        are saved. When the generator is prompted for another
+        value (inside for-loop or explicit next(...) call), this
+        function resumes from where it left off.
+        """
+
+        oz, oy, ox = self.output_volume_size
+        cz, cy, cx = self.cell_size
+
+        for z in range(0, oz, cz):
+            for y in range(0, oy, cy):
+                for x in range(0, ox, cx):
+                    curr_cell: geometry.AABB = \
+                    (z, min(z + cz, oz),
+                     y, min(y + cy, oy),
+                     x, min(x + cx, ox))
+
+                    yield curr_cell
+
+    def _cloud_read(
+        self,
+        image: io.InputArray,
+        image_slice: tuple[slice]
+    ) -> torch.Tensor:
+        """
+        Submits parallel read to Dask-Distributed Client.
+        """
+
+        arr_slice = image.arr[image_slice]
+        future = self.client.compute(arr_slice)
+        result = future.result()  # Worker waits for result
+
+        result = torch.Tensor(result).pin_memory()
+
+        return result
+
+    def start_reading(self):
+        """
+        Trigger the continuous cloud reading
+        """
+        self.background_worker.start()
+
+    def __next__(self) -> tuple[geometry.AABB, tuple[int], tuple[torch.Tensor]]:
+        """
+        Dispense from the queue.
+        """
+
+        if self.finished_loading:
+            raise StopIteration
+
+        while self.data_queue.empty():
+            logging.info("Queue is stalling. Please increase background workers.")
+
+        return self.data_queue.get()
