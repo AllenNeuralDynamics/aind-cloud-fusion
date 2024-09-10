@@ -340,6 +340,7 @@ def run_fusion(  # noqa: C901
 
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
+    print("RUNTIME option: ", runtime_params.option)
 
     # Vanilla Processing
     if runtime_params.option == 0:
@@ -381,8 +382,13 @@ def run_fusion(  # noqa: C901
         process_args: list[dict] = []
         num_cells = len(runtime_params.worker_cells)
         for cell_num, cell in enumerate(runtime_params.worker_cells):
-            z, y, x = cell
-            process_args.append({"cell_num": cell_num, "z": z, "y": y, "x": x})
+            for in_cell in cell:
+                # print("Before failing: ", cell_num, " - ", len(cell), " pos 0 and 1: ", cell[0], cell[1])
+                # exit()
+                z, y, x = in_cell
+                process_args.append(
+                    {"cell_num": cell_num, "z": z, "y": y, "x": x}
+                )
 
         # Important for prevent running out of resources
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -486,8 +492,11 @@ def run_fusion(  # noqa: C901
             processes=True,
         )
         if not (runtime_params.custom_cluster is None):
-            assert isinstance(runtime_params.custom_cluster, LocalCluster), \
-                print('RuntimeParameters.custom_cluster must be LocalCluster type.')
+            assert isinstance(
+                runtime_params.custom_cluster, LocalCluster
+            ), print(
+                "RuntimeParameters.custom_cluster must be LocalCluster type."
+            )
             cluster = runtime_params.custom_cluster
         client = Client(cluster)  # noqa: F841
 
@@ -544,10 +553,12 @@ def run_fusion(  # noqa: C901
 
     # Dask-EMR
     elif runtime_params.option == 3:
-        assert not (runtime_params.custom_cluster is None), \
-            print('RuntimeParameters.custom_cluster is required for Dask-EMR execution.')
-        assert isinstance(runtime_params.custom_cluster, YarnCluster), \
-            print('RuntimeParameters.custom_cluster must be YarnCluster type.')
+        assert not (runtime_params.custom_cluster is None), print(
+            "RuntimeParameters.custom_cluster is required for Dask-EMR execution."
+        )
+        assert isinstance(runtime_params.custom_cluster, YarnCluster), print(
+            "RuntimeParameters.custom_cluster must be YarnCluster type."
+        )
 
         start_run = time.time()
 
@@ -846,6 +857,7 @@ def color_cell(
         slice(cell_box[4], cell_box[5]),
     )
     # Convert from float32 -> canonical uint16
+    # TODO -> Fix changing dtype after interpolation since it's not correct
     output_chunk = np.array(fused_cell.cpu()).astype(np.uint16)
     output_volume[output_slice] = output_chunk
 
