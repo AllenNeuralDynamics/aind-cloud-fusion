@@ -7,7 +7,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 import boto3
 import dask.array as da
@@ -15,8 +15,6 @@ import numpy as np
 import tensorstore as ts
 import xmltodict
 import yaml
-from dask.distributed import LocalCluster
-from dask_yarn import YarnCluster
 from numcodecs import Blosc
 
 import aind_cloud_fusion.geometry as geometry
@@ -75,7 +73,7 @@ class InputTensorstore(InputArray):
         self.arr = arr
 
     def __getitem__(self, slice):
-        return np.array(self.arr[slice])
+        return np.array(self.arr[slice].read().result())
 
     @property
     def shape(self):
@@ -141,8 +139,9 @@ class BigStitcherDataset(Dataset):
         assert datastore in [
             0,
             1,
-        ], "Only 0 = Dask and 1 = Tensorstore supported."
-        self.datastore = datastore  # {0 = Dask, 1 = Tensorstore}
+            2,
+        ], "Only 0 = Dask, 1 = Tensorstore"
+        self.datastore = datastore
 
         allowed_levels = [0, 1, 2, 3, 4, 5]
         assert (
@@ -567,10 +566,6 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                 print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
                 tile_arrays[int(tile_id)] = arr
 
-            # print("Zarr tiles: ", tile_arrays)
-
-            # raise ValueError("Not implemented yet")
-
         self.tile_cache = tile_arrays
 
         return tile_arrays
@@ -617,39 +612,12 @@ class OutputTensorstore(OutputArray):
     def __setitem__(self, index, value):
         self.arr[index].write(value).result()
 
-
 @dataclass
 class OutputParameters:
     path: str
-    chunksize: tuple[int, int, int, int, int]
-    resolution_zyx: tuple[float, float, float]
-    datastore: int  # {0 == Dask, 1 == Tensorstore}
+    datastore: int = 0 # {0 == Dask, 1 == Tensorstore}
+    chunksize: tuple[int, int, int, int, int] = (1, 1, 128, 128, 128)
+    resolution_zyx: tuple[float, float, float] = (1.0, 1.0, 1.0)
     dtype: np.dtype = np.uint16
     dimension_separator: str = "/"
     compressor = Blosc(cname="zstd", clevel=1, shuffle=Blosc.SHUFFLE)
-
-
-@dataclass
-class RuntimeParameters:
-    """
-    Simplified Runtime Parameters
-    option:
-        0: single process exectution
-        1: multiprocessing execution
-        2: local dask cluster execution
-        3: dask-emr execution
-    pool_size: number of processes/vCPUs for options {1, 2, 3}
-        This parameter is used to initalize a basic cluster for options {2, 3}.
-    worker_cells:
-        list of cells/chunks this execution operates on
-    custom_cluster: Custom cluster configuration for options {2, 3}.
-        For {0, 1}, this parameter is ignored.
-        For 2, custom_cluster is an optional LocalCluster obj, and
-        the most basic cluster is init based on pool_size.
-        For 3, custom_cluster is a necessary YarnCluster obj.
-    """
-
-    option: int
-    pool_size: int
-    worker_cells: list[tuple[int, int, int]]
-    custom_cluster: Optional[Union[LocalCluster, YarnCluster]] = None
