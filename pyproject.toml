@@ -26,7 +26,6 @@ dependencies = [
     'Pillow==10.1.0',
     'boto3',
     'tensorstore==0.1.56',
-    'dask-yarn==0.9',
 ]
 
 [project.optional-dependencies]
