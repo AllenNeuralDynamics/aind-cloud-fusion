@@ -730,11 +730,6 @@ class FusionVolumeSampler(cq.VolumeSampler):
         tile_to_overlap_ids, overlaps = \
             utils.get_overlap_regions(tile_layout, tile_aabbs)
 
-        with open('/results/raw_tile_aabb_log.txt', 'w') as f:
-            for t_id, t_aabb in tile_aabbs.items():
-                log = f"{t_id}: {t_aabb} \n"
-                f.write(log)
-
         modified_overlaps: dict[int, geometry.AABB]= {}
         cz, cy, cx = chunk_size
         for o_id, o_aabb in overlaps.items():
