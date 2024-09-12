@@ -186,7 +186,7 @@ class BigStitcherDataset(Dataset):
                 tile_zarr = open_zarr_s3(bucket, obj)
                 arr = InputTensorstore(tile_zarr)
 
-            print(f"Loading Tile {tile_id} / {len(tile_paths)}")
+            print(f"Loading Tile {tile_id}")
             tile_arrays[int(tile_id)] = arr
 
         self.tile_cache = tile_arrays
@@ -485,7 +485,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                         tile_zarr = open_zarr_s3(bucket, obj)
                         arr = InputTensorstore(tile_zarr)
 
-                    print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
+                    print(f"Loading Tile {tile_id}")
                     tile_arrays[int(tile_id)] = arr
 
         self.tile_cache = tile_arrays
@@ -543,7 +543,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                 if self.datastore == 1:
                     assert False, print("This is not supported.")
 
-                print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
+                print(f"Loading Tile {tile_id}")
                 tile_arrays[int(tile_id)] = arr
 
         else:
@@ -563,7 +563,7 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                 if self.datastore == 1:
                     assert False, print("This is not supported.")
 
-                print(f"Loading Tile {tile_id} / {len(tile_id_lut)}")
+                print(f"Loading Tile {tile_id}")
                 tile_arrays[int(tile_id)] = arr
 
         self.tile_cache = tile_arrays
