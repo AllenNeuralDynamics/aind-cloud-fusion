@@ -384,9 +384,9 @@ def run_fusion(  # noqa: C901
                                                 start=volume_sampler_start)
 
     batch_start = time.time()
-    total_cells = sum(1 for _ in copy.deepcopy(overlap_volume_sampler))
+    total_cells = len(overlap_volume_sampler)
     batch_size = 200
-    LOGGER.info(f"CPU Cell Size: {cpu_cell_size}")
+    LOGGER.info(f"CPU Cell Size: {CPU_CELL_SIZE}")
     LOGGER.info(f"CPU Total Cells: {total_cells}")
     LOGGER.info(f"CPU Batch Size: {batch_size}")
 
@@ -544,9 +544,9 @@ def gpu_fusion(
                                           num_workers=3)
 
     batch_start = time.time()
-    total_cells = len(cloud_dataloader)
+    total_cells = len(volume_sampler)
     batch_size = 40
-    print(f'CPU Cell Size: {cell_size}')
+    print(f'GPU Cell Size: {cell_size}')
     print(f'GPU Total cells: {total_cells}')
     print(f'GPU Batch size: {batch_size}')
 
@@ -849,6 +849,28 @@ class FusionVolumeSampler(cq.VolumeSampler):
         aabb_src: geometry.AABB = (0, sv_z, 0, sv_y, 0, sv_x)
 
         return utils.check_collision(cell_box_src, aabb_src)
+
+    def __len__(self):
+        cz, cy, cx = self.cell_size
+        regions = self.non_overlap_regions
+        if self.traverse_overlap:
+            regions = self.overlap_regions
+
+        total_count = 0
+        for region in regions:
+            rz_min, rz_max, ry_min, ry_max, rx_min, rx_max = region
+            rz_length = rz_max - rz_min
+            ry_length = ry_max - ry_min
+            rx_length = rx_max - rx_min
+
+            z_cnt = int(np.ceil(rz_length / cz))
+            y_cnt = int(np.ceil(ry_length / cy))
+            x_cnt = int(np.ceil(rx_length / cx))
+
+            total_count += (z_cnt * y_cnt * x_cnt)
+        
+        stride_count = total_count / self.stride
+        return stride_count
 
     def __iter__(self):
         """

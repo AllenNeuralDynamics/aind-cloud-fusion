@@ -157,16 +157,6 @@ class CloudDataloader(Iterator):
         print('Warming up Queue...')
         time.sleep(10)
 
-    def __len__(self):
-        """
-        Exhausts a temp iterator.
-        """
-        if self.length:
-            return self.length
-
-        self.length = sum(1 for _ in iter(self.sampler))
-        return self.length
-
     def load_cell(self):
         """
         Called across multiple threads.
