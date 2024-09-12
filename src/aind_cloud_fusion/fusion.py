@@ -147,24 +147,28 @@ def initialize_output_volume_dask(
     Zarr thread-safe datastore initialized on OutputParameters.
     """
 
+    # Local execution   
+    out_group = zarr.open_group(output_params.path, mode="w")
+
     # Cloud execuion
-    s3 = s3fs.S3FileSystem(
-        config_kwargs={
-            "max_pool_connections": 50,
-            "s3": {
-                "multipart_threshold": 64
-                * 1024
-                * 1024,  # 64 MB, avoid multipart upload for small chunks
-                "max_concurrent_requests": 20,  # Increased from 10 -> 20.
-            },
-            "retries": {
-                "total_max_attempts": 100,
-                "mode": "adaptive",
-            },
-        }
-    )
-    store = s3fs.S3Map(root=output_params.path, s3=s3)
-    out_group = zarr.open(store=store, mode="w")
+    if output_params.path.startswith("s3"): 
+        s3 = s3fs.S3FileSystem(
+            config_kwargs={
+                "max_pool_connections": 50,
+                "s3": {
+                    "multipart_threshold": 64
+                    * 1024
+                    * 1024,  # 64 MB, avoid multipart upload for small chunks
+                    "max_concurrent_requests": 20,  # Increased from 10 -> 20.
+                },
+                "retries": {
+                    "total_max_attempts": 100,
+                    "mode": "adaptive",
+                },
+            }
+        )
+        store = s3fs.S3Map(root=output_params.path, s3=s3)
+        out_group = zarr.open(store=store, mode="a")
 
     path = "0"
     chunksize = output_params.chunksize
