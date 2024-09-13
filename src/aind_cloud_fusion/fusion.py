@@ -285,10 +285,10 @@ def get_cell_count_zyx(
 def run_fusion(  # noqa: C901
     input_s3_path: str,
     xml_path: str,
+    channel_num: int,
     output_params: io.OutputParameters,
     blend_option: str,
     datastore: int = 0,
-    channel_num: int = -1,
     cpu_cell_size: Optional[tuple[int, int, int]] = None,
     gpu_cell_size: Optional[tuple[int, int, int]] = None,
     volume_sampler_stride: int = 1,
@@ -297,12 +297,12 @@ def run_fusion(  # noqa: C901
     """
     Fusion algorithm.
     Inputs:
-    input_path, xml_path: for reading the incoming dataset
+    input_s3_path, xml_path, channel_num: for reading the incoming dataset
     output_params: configurations on output volume
     blend_option: type of blending algorithm
 
     Optional/Advanced:
-    channel_num: provide to initalize a BigStitcherDatasetChannel.
+    datastore: Option to swap to tensorstore reading.
     cpu/gpu cell_size: size of subvolume in output volume sent to each cpu/gpu worker.
     volume_sampler stride/start: options for partitioning work across capsules.
     """
@@ -314,9 +314,10 @@ def run_fusion(  # noqa: C901
     LOGGER.setLevel(logging.INFO)
 
     # Base Initalization
-    dataset = io.BigStitcherDataset(xml_path, input_s3_path, datastore=datastore)
-    if channel_num != -1:
-        dataset = io.BigStitcherDatasetChannel(xml_path, input_s3_path, channel_num, datastore=datastore)
+    dataset = io.BigStitcherDatasetChannel(xml_path, 
+                                           input_s3_path, 
+                                           channel_num, 
+                                           datastore=datastore)
     a, b, c, d, e, f = initialize_fusion(dataset, output_params)
     tile_arrays = a
     tile_transforms = b
@@ -325,7 +326,7 @@ def run_fusion(  # noqa: C901
     output_volume_size = e
     output_volume_origin = f
     output_volume = initialize_output_volume(output_params, output_volume_size)
-    tile_layout = utils.parse_yx_tile_layout(xml_path)
+    tile_layout = utils.parse_yx_tile_layout(xml_path, channel_num)
 
     LOGGER.info(f"Number of Tiles: {len(tile_arrays)}")
     LOGGER.info(f"{output_volume_size=}")
@@ -358,14 +359,14 @@ def run_fusion(  # noqa: C901
         target=gpu_fusion,
         args=(input_s3_path,
             xml_path,
+            channel_num,
             output_params,
             tile_layout,
             output_volume,
             GPU_CELL_SIZE,
             volume_sampler_stride,
             volume_sampler_start,
-            datastore,
-            channel_num)
+            datastore)
     )
     p.daemon = True
     p.start()
@@ -492,6 +493,7 @@ def cpu_fusion(
 def gpu_fusion(
     input_s3_path: str,
     xml_path: str,
+    channel_num: int,
     output_params: io.OutputParameters,
     tile_layout: list[list[int]],
     output_volume: io.OutputArray,
@@ -499,7 +501,6 @@ def gpu_fusion(
     volume_sampler_stride: int,
     volume_sampler_start: int,
     datastore: int = 0,
-    channel_num: int = -1
 ):
     """
     NOTE:
@@ -508,9 +509,10 @@ def gpu_fusion(
     for ultra-fast interpolation.
     """
 
-    dataset = io.BigStitcherDataset(xml_path, input_s3_path, datastore=datastore)
-    if channel_num != -1:
-        dataset = io.BigStitcherDatasetChannel(xml_path, input_s3_path, channel_num, datastore=datastore)
+    dataset = io.BigStitcherDatasetChannel(xml_path, 
+                                           input_s3_path, 
+                                           channel_num, 
+                                           datastore=datastore)
     a, b, c, d, e, f = initialize_fusion(dataset, output_params)
     tile_arrays = a
     tile_transforms = b
@@ -869,7 +871,8 @@ class FusionVolumeSampler(cq.VolumeSampler):
 
             total_count += (z_cnt * y_cnt * x_cnt)
         
-        stride_count = total_count / self.stride
+        stride_count = int(total_count / self.stride)
+
         return stride_count
 
     def __iter__(self):

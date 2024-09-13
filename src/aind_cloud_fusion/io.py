@@ -435,8 +435,15 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             tile_id = zgroup["@setup"]
             tile_name = zgroup["path"]
             s_parts = tile_name.split("_")
-            location = (int(s_parts[2]), int(s_parts[4]), int(s_parts[6]))
-            tile_id_lut[location] = int(tile_id)
+            
+            match = re.search(r'ch_(\d+)', tile_name)
+            ch = int(match.group(1))
+
+            location_ch = (int(s_parts[2]), 
+                           int(s_parts[4]), 
+                           int(s_parts[6]), 
+                           ch)
+            tile_id_lut[location_ch] = int(tile_id)
 
         # Reference path: s3://aind-open-data/HCR_677594_2023-10-20_15-10-36/SPIM.ome.zarr/
         # Reference tilename: <tile_name, no underscores>_X_####_Y_####_Z_####_ch_###.zarr
@@ -460,12 +467,17 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
 
                     full_resolution_p = self.s3_path + p + "/0"
                     s_parts = p.split("_")
-                    location = (
+                    
+                    match = re.search(r'ch_(\d+)', p)
+                    ch = int(match.group(1))
+                    
+                    location_ch = (
                         int(s_parts[2]),
                         int(s_parts[4]),
                         int(s_parts[6]),
+                        ch
                     )
-                    tile_id = tile_id_lut[location]
+                    tile_id = tile_id_lut[location_ch]
 
                     arr = None
                     if self.datastore == 0:  # Dask

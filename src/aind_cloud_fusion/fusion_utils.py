@@ -1,4 +1,6 @@
 from collections import defaultdict
+import re
+
 import numpy as np
 import torch
 import xmltodict
@@ -343,7 +345,7 @@ def get_overlap_regions(
     return tile_to_overlap_ids, overlaps
 
 
-def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
+def parse_yx_tile_layout(xml_path: str, channel: int) -> list[list[int]]:
     """
     Utility for parsing tile layout from a bigstitcher xml
     requested by some blending modules.
@@ -358,22 +360,33 @@ def parse_yx_tile_layout(xml_path: str) -> list[list[int]]:
     defined in the xml file. Spaces denoted with tile id '-1'.
     """
 
-    # Parse stage positions
     with open(xml_path, "r") as file:
         data = xmltodict.parse(file.read())
+
+    # Get channel tiles    
+    channel_tile_ids: list[int] = [] 
+    for zgroup in data["SpimData"]["SequenceDescription"]["ImageLoader"][
+        "zgroups"
+    ]["zgroup"]:
+        tile_id = zgroup["@setup"]
+        tile_name = zgroup["path"]
+        match = re.search(r'ch_(\d+)', tile_name)
+        ch = int(match.group(1))
+
+        if ch == channel:
+            channel_tile_ids.append(tile_id)
+    
+    # Get channel tile stage positions
     stage_positions_xyz: dict[int, tuple[float, float, float]] = {}
     for d in data["SpimData"]["ViewRegistrations"]["ViewRegistration"]:
         tile_id = d["@setup"]
+        if tile_id in channel_tile_ids:
+            view_transform = d["ViewTransform"]
+            if isinstance(view_transform, list):
+                view_transform = view_transform[-1]
 
-        view_transform = d["ViewTransform"]
-        if isinstance(view_transform, list):
-            view_transform = view_transform[-1]
-
-        nums = [float(val) for val in view_transform["affine"].split(" ")]
-        stage_positions_xyz[tile_id] = tuple(nums[3::4])
-
-    # print('stage positions')
-    # print(stage_positions_xyz)
+            nums = [float(val) for val in view_transform["affine"].split(" ")]
+            stage_positions_xyz[tile_id] = tuple(nums[3::4])
 
     # Calculate delta_x and delta_y
     positions_arr_xyz = np.array([pos for pos in stage_positions_xyz.values()])
