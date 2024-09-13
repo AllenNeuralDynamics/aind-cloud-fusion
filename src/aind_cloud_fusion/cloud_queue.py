@@ -117,7 +117,6 @@ class ThreadQueue:
 
             time.sleep(1)  # Yield control to another thread
 
-
 class CloudDataloader(Iterator):
     def __init__(
         self,
@@ -127,33 +126,25 @@ class CloudDataloader(Iterator):
         logger: Optional[logging.Logger] = None
     ) -> None:
         """
-        Initalize the ThreadQueue and worker pool.
+        Initialize the ThreadQueue and worker pool.
         """
         self.dataset = dataset
-        self.sampler = sampler
-
-        self.iterator = iter(sampler)
+        self.sampler = iter(sampler)
         self.iterator_lock = Lock()
-
-        self.length = None
-
         log_name = 'CloudDataloader'
         if logger is None:
             log_name = None
-
-        # Setting the max size to the number of workers. Makes sense.
         self.output_queue = ThreadQueue(max_size=num_workers,
                                         logger=logger,
                                         name=log_name)
-
         self.num_workers = num_workers
         self.workers: list[Thread] = []
-        self.stop_event = Event()
+        self.finished_cnt = 0
+
         for i in range(self.num_workers):
             t = Thread(target=self.load_cell)
             t.start()
             self.workers.append(t)
-
         print('Warming up Queue...')
         time.sleep(10)
 
@@ -163,31 +154,32 @@ class CloudDataloader(Iterator):
         Dispenses from sampler and
         places item into queue.
         """
-        while not self.stop_event.is_set():
+        while True:
             try:
                 with self.iterator_lock:
-                    cell_aabb, src_ids = next(self.iterator)
+                    cell_aabb, src_ids = next(self.sampler)
                 item = self.dataset[(cell_aabb, src_ids)]
                 self.output_queue.put(item)
             except StopIteration:
+                self.finished_cnt += 1
                 break
-
-        # Signal to main thread that this thread is done
-        self.output_queue.put(None)
+        
+        if self.finished_cnt == self.num_workers:
+            self.output_queue.put(None)
 
     def __next__(self):
         """
         Called by main thread.
         Places items into queue and
-        shuts down thread pool on 'None' signal.
+        shuts down thread pool after receiving 'None'.
         """
-
         if self.num_workers == 0:
             with self.iterator_lock:
-                return self.dataset[next(self.iterator)]
-
+                return self.dataset[next(self.sampler)]
+        
         item = self.output_queue.get()
-        if item is None:
+        
+        if item is None: 
             self.shutdown()
             raise StopIteration
 
@@ -197,8 +189,9 @@ class CloudDataloader(Iterator):
         """
         Close the thread pool.
         """
-        self.stop_event.set()
         for thread in self.workers:
             if thread != threading.current_thread():
                 thread.join()
         self.workers.clear()
+
+        print('Shutdown CloudDataloader.')

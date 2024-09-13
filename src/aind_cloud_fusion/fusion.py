@@ -368,7 +368,7 @@ def run_fusion(  # noqa: C901
             volume_sampler_start,
             datastore)
     )
-    p.daemon = True
+    # p.daemon = True
     p.start()
 
     # Start the CPU Runtime
@@ -423,7 +423,8 @@ def run_fusion(  # noqa: C901
         f"CPU: Finished up to {i}/{total_cells}. Batch time: {time.time() - batch_start}"
     )
 
-    # GPU process is a daemon, closes here.
+    p.join()
+    p.close()
 
 
 def cpu_fusion(
@@ -585,12 +586,8 @@ def gpu_fusion(
             print(f"GPU: Finished up to {i}/{total_cells}. Batch time: {time.time() - batch_start}")
             batch_start = time.time()
 
-        if i == (total_cells - 1):
-            print(f"GPU: Finished up to {i}/{total_cells}. Batch time: {time.time() - batch_start}")
-            break
+    print(f"GPU: Finished up to {i}/{total_cells}. Batch time: {time.time() - batch_start}")
 
-        # I suspect that the dataloader is stalling at the end.
-        # I will need to troubleshoot that seperately.
 
 
 def calculate_gpu_cell_size(
