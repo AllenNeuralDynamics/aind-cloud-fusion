@@ -147,11 +147,11 @@ def initialize_output_volume_dask(
     Zarr thread-safe datastore initialized on OutputParameters.
     """
 
-    # Local execution   
+    # Local execution
     out_group = zarr.open_group(output_params.path, mode="w")
 
     # Cloud execuion
-    if output_params.path.startswith("s3"): 
+    if output_params.path.startswith("s3"):
         s3 = s3fs.S3FileSystem(
             config_kwargs={
                 "max_pool_connections": 50,
@@ -314,9 +314,9 @@ def run_fusion(  # noqa: C901
     LOGGER.setLevel(logging.INFO)
 
     # Base Initalization
-    dataset = io.BigStitcherDatasetChannel(xml_path, 
-                                           input_s3_path, 
-                                           channel_num, 
+    dataset = io.BigStitcherDatasetChannel(xml_path,
+                                           input_s3_path,
+                                           channel_num,
                                            datastore=datastore)
     a, b, c, d, e, f = initialize_fusion(dataset, output_params)
     tile_arrays = a
@@ -368,7 +368,7 @@ def run_fusion(  # noqa: C901
             volume_sampler_start,
             datastore)
     )
-    # p.daemon = True
+    p.daemon = True
     p.start()
 
     # Start the CPU Runtime
@@ -423,8 +423,8 @@ def run_fusion(  # noqa: C901
         f"CPU: Finished up to {i}/{total_cells}. Batch time: {time.time() - batch_start}"
     )
 
-    p.join()
-    p.close()
+    # p.join()
+    # p.close()  # Code Ocean runtime error... will just make this a background process.
 
 
 def cpu_fusion(
@@ -510,9 +510,9 @@ def gpu_fusion(
     for ultra-fast interpolation.
     """
 
-    dataset = io.BigStitcherDatasetChannel(xml_path, 
-                                           input_s3_path, 
-                                           channel_num, 
+    dataset = io.BigStitcherDatasetChannel(xml_path,
+                                           input_s3_path,
+                                           channel_num,
                                            datastore=datastore)
     a, b, c, d, e, f = initialize_fusion(dataset, output_params)
     tile_arrays = a
@@ -867,7 +867,7 @@ class FusionVolumeSampler(cq.VolumeSampler):
             x_cnt = int(np.ceil(rx_length / cx))
 
             total_count += (z_cnt * y_cnt * x_cnt)
-        
+
         stride_count = int(total_count / self.stride)
 
         return stride_count
