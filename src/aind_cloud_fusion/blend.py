@@ -79,7 +79,6 @@ class WeightedLinearBlending(BlendingModule):
         """
         Parameters
         ----------
-        snowball chunk: 5d tensor in 11zyx order
         chunks: 5d tensor(s) in 11zyx order
         kwargs:
             chunk_tile_ids:
@@ -145,3 +144,84 @@ class WeightedLinearBlending(BlendingModule):
             fused_chunk += w * c
 
         return fused_chunk
+
+
+class FirstWins(BlendingModule):
+    """
+    Overwrites tiles giving priority to tiles seen earlier. 
+    Given a tile layout: 
+        [[1, 2, 3], 
+        [4, 5, 6]]
+    And a raster order: 
+        [3, 6, 2, 5, 1, 4]
+
+    A chunk at the intersection of {2, 3, 5, 6} would be 
+    colored in reverse raster order: 5 -> 2 -> 6 -> 3.
+    """
+
+    def __init__(
+        self,
+        tile_layout: list[list[int]],
+        tile_raster_order: Optional[list[int]] = None
+    ) -> None:
+        super().__init__()
+        """
+        tile_layout: 2D array of tile ids
+        tile_raster_order: 
+            Overrides default top->down, right->left raster order. 
+        """
+
+        # Default raster order
+        # top->down, right->left
+        # + -- x
+        # |
+        # y
+        y_length = len(tile_layout)
+        x_length = len(tile_layout[0])
+        for x in reversed(range(x_length)):
+            for y in range(y_length):
+                tile_id = tile_layout[y][x]
+                if tile_id != -1: 
+                    self.tile_raster_order.append(tile_id)
+
+        # Override raster order
+        if tile_raster_order: 
+            layout_ids = set([item for row in tile_layout for item in row])
+            order_ids = set(tile_raster_order)
+
+            if layout_ids.intersection(order_ids) != order_ids:
+                raise ValueError(f"Provided raster order do not match the tile layout provided. 
+                                   Tile Layout: {tile_layout}, 
+                                   Raster Order: {tile_raster_order}")
+
+            self.tile_raster_order: list[int] = tile_raster_order
+        
+    def blend(
+        self, chunks: list[torch.Tensor], device: torch.device, kwargs={}
+    ) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        chunks: 5d tensor(s) in 11zyx order
+        kwargs:
+            chunk_tile_ids:
+                list of tile ids corresponding to each chunk
+
+        Returns
+        -------
+        fused_chunk: combined chunk
+        """
+
+        chunk_lut: dict[int, torch.Tensor] = {}
+        chunk_tile_ids = kwargs["chunk_tile_ids"]
+        for c_id, chunk in zip(chunk_tile_ids, chunks):
+            chunk_lut[c_id] = chunk
+
+        # Coloring in reverse order
+        composite_chunk: torch.Tensor = torch.zeros_like(chunks[0])
+        for tile_id in reversed(self.tile_raster_order): 
+            if tile_id in chunk_tile_ids:
+                curr_chunk = chunk_lut[tile_id]
+                composite_chunk = torch.where(curr_chunk != 0, curr_chunk, composite_chunk)
+            
+        return composite_chunk
