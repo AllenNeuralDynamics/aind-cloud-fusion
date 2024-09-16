@@ -1,6 +1,7 @@
 """
 Interface for generic blending.
 """
+from typing import Optional
 
 import torch
 
