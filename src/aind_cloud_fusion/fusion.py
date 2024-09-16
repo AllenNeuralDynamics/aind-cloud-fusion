@@ -335,7 +335,8 @@ def run_fusion(  # noqa: C901
 
     # Set Blending
     blending_options = {'max_projection': blend.MaxProjection(),
-                        'weighted_linear_blending': blend.WeightedLinearBlending(tile_aabbs)}
+                        'weighted_linear_blending': blend.WeightedLinearBlending(tile_aabbs),
+                        'first_wins': blend.FirstWins(tile_layout)}
     if not (blend_option in blending_options):
         raise ValueError(f"Please choose from the following blending options: {blending_options.keys()}")
     blend_module = blending_options[blend_option]
