@@ -369,7 +369,7 @@ def run_fusion(  # noqa: C901
             volume_sampler_start,
             datastore)
     )
-    p.daemon = True
+    # p.daemon = True
     p.start()
 
     # Start the CPU Runtime
@@ -424,8 +424,8 @@ def run_fusion(  # noqa: C901
         f"CPU: Finished up to {i}/{total_cells}. Batch time: {time.time() - batch_start}"
     )
 
-    # p.join()
-    # p.close()  # Code Ocean runtime error... will just make this a background process.
+    p.join()
+    p.close()
 
 
 def cpu_fusion(
