@@ -292,7 +292,8 @@ def run_fusion(  # noqa: C901
     cpu_cell_size: Optional[tuple[int, int, int]] = None,
     gpu_cell_size: Optional[tuple[int, int, int]] = None,
     volume_sampler_stride: int = 1,
-    volume_sampler_start: int = 0
+    volume_sampler_start: int = 0,
+    smartspim: bool = False
 ):
     """
     Fusion algorithm.
@@ -317,7 +318,8 @@ def run_fusion(  # noqa: C901
     dataset = io.BigStitcherDatasetChannel(xml_path,
                                            input_s3_path,
                                            channel_num,
-                                           datastore=datastore)
+                                           datastore=datastore,
+                                           smartspim=smartspim)
     a, b, c, d, e, f = initialize_fusion(dataset, output_params)
     tile_arrays = a
     tile_transforms = b
@@ -367,7 +369,8 @@ def run_fusion(  # noqa: C901
             GPU_CELL_SIZE,
             volume_sampler_stride,
             volume_sampler_start,
-            datastore)
+            datastore,
+            smartspim)
     )
     # p.daemon = True
     p.start()
@@ -503,6 +506,7 @@ def gpu_fusion(
     volume_sampler_stride: int,
     volume_sampler_start: int,
     datastore: int = 0,
+    smartspim: bool = False
 ):
     """
     NOTE:
@@ -514,7 +518,8 @@ def gpu_fusion(
     dataset = io.BigStitcherDatasetChannel(xml_path,
                                            input_s3_path,
                                            channel_num,
-                                           datastore=datastore)
+                                           datastore=datastore,
+                                           smartspim=smartspim)
     a, b, c, d, e, f = initialize_fusion(dataset, output_params)
     tile_arrays = a
     tile_transforms = b
