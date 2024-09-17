@@ -392,10 +392,15 @@ def parse_yx_tile_layout(xml_path: str, channel: int) -> list[list[int]]:
     positions_arr_xyz = np.array([pos for pos in stage_positions_xyz.values()])
     x_pos = list(set(positions_arr_xyz[:, 0]))
     x_pos = sorted(x_pos)
-    delta_x = x_pos[1] - x_pos[0]
+    delta_x = 1  # Single element case
+    if len(x_pos) != 1: 
+        delta_x = x_pos[1] - x_pos[0]
+
     y_pos = list(set(positions_arr_xyz[:, 1]))
     y_pos = sorted(y_pos)
-    delta_y = y_pos[1] - y_pos[0]
+    delta_y = 1  # Single element case
+    if len(y_pos) != 1: 
+        delta_y = y_pos[1] - y_pos[0]
 
     M = np.array([[(1. / delta_x), 0.],
                   [0., (1. / delta_y)]])

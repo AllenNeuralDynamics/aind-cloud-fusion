@@ -151,7 +151,7 @@ def initialize_output_volume_dask(
     out_group = zarr.open_group(output_params.path, mode="w")
 
     # Cloud execuion
-    if output_params.path.startswith("s3"):
+    if str(output_params.path).startswith("s3"):
         s3 = s3fs.S3FileSystem(
             config_kwargs={
                 "max_pool_connections": 50,
