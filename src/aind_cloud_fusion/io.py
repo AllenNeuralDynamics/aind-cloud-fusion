@@ -522,7 +522,13 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
         ]["zgroup"]:
             tile_id = zgroup["@setup"]
             tile_name = zgroup["path"]
-            tile_id_lut[tile_name] = int(tile_id)
+
+            pattern = re.compile(r'(\d+)_(\d+)')
+            match = pattern.search(tile_name)
+            numbers = match.groups()
+            location = (int(numbers[0]), int(numbers[1]))
+
+            tile_id_lut[location] = int(tile_id)
 
         # Reference path: s3://aind-open-data/SmartSPIM_{number}/SmartSPIM/Channel/Tilename.zarr
         # Reference tilename: #####_#####.zarr, which is consistent across channels.
@@ -545,7 +551,13 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
                     continue
 
                 full_resolution_p = self.s3_path + p + f"/{multiscale}"
-                tile_id = tile_id_lut[p]
+
+                pattern = re.compile(r'(\d+)_(\d+)')
+                match = pattern.search(p)
+                numbers = match.groups()
+                location = (int(numbers[0]), int(numbers[1]))
+                
+                tile_id = tile_id_lut[location]
 
                 arr = None
                 if self.datastore == 0:  # Dask
@@ -565,7 +577,13 @@ class BigStitcherDatasetChannel(BigStitcherDataset):
             for zarr_tile in local_dir.glob("*.zarr"):
 
                 full_resolution_p = zarr_tile.joinpath(multiscale)
-                tile_id = tile_id_lut[zarr_tile.name]
+                
+                pattern = re.compile(r'(\d+)_(\d+)')
+                match = pattern.search(zarr_tile.name)
+                numbers = match.groups()
+                location = (int(numbers[0]), int(numbers[1]))
+                
+                tile_id = tile_id_lut[location]
 
                 arr = None
                 if self.datastore == 0:  # Dask
