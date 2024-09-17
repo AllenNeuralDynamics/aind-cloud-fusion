@@ -177,6 +177,7 @@ class FirstWins(BlendingModule):
         # + -- x
         # |
         # y
+        self.tile_raster_order: list[int] = []
         y_length = len(tile_layout)
         x_length = len(tile_layout[0])
         for x in reversed(range(x_length)):
@@ -195,7 +196,7 @@ class FirstWins(BlendingModule):
                                    Tile Layout: {tile_layout},
                                    Raster Order: {tile_raster_order}""")
 
-            self.tile_raster_order: list[int] = tile_raster_order
+            self.tile_raster_order = tile_raster_order
 
     def blend(
         self, chunks: list[torch.Tensor], device: torch.device, kwargs={}
