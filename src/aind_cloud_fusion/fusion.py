@@ -453,7 +453,7 @@ def cpu_fusion(
                                             tile_sizes_zyx[t_id],
                                             device='cpu')
         src_img = tile_arrays[t_id][image_slice]
-        src_tensor = torch.Tensor(src_img.astype(np.int16))
+        src_tensor = torch.Tensor(src_img.astype(np.int32))
 
         # Calculate sample field
         sample_field = \
@@ -661,13 +661,13 @@ class CloudDataset(Dataset):
 
             result = self.tile_arrays[t_id][image_slice]
 
-            # uint16 -> int16 for pytorch compatibility.
-            # Max intensity values of original data are close to 1000,
-            # no where near 1/2 uint16 (32,767), so this is safe.
+            # uint16 -> int32 for pytorch compatibility.
+            # uint16: [0, 2**16]
+            # int32: [-2**16, 2**16]
             if self.pin_memory:
-                result = torch.Tensor(result.astype(np.int16)).pin_memory()
+                result = torch.Tensor(result.astype(np.int32)).pin_memory()
             else:
-                result = torch.Tensor(result.astype(np.int16))
+                result = torch.Tensor(result.astype(np.int32))
 
             src_tensors.append(result)
 
